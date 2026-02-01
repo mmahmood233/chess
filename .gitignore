@@ -1,0 +1,27 @@
+# Backend
+backend/node_modules/
+backend/dist/
+backend/.env
+
+# Flutter
+chess_app/.dart_tool/
+chess_app/.flutter-plugins
+chess_app/.flutter-plugins-dependencies
+chess_app/.packages
+chess_app/build/
+chess_app/.pub-cache/
+chess_app/.pub/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
