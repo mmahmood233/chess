@@ -1,0 +1,40 @@
+{
+  "name": "chess-backend",
+  "version": "1.0.0",
+  "description": "Multiplayer Chess Backend with NestJS",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio"
+  },
+  "keywords": ["chess", "multiplayer", "nestjs"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@nestjs/common": "^10.0.0",
+    "@nestjs/core": "^10.0.0",
+    "@nestjs/platform-express": "^10.0.0",
+    "@nestjs/platform-socket.io": "^10.0.0",
+    "@nestjs/websockets": "^10.0.0",
+    "@prisma/client": "^5.0.0",
+    "chess.js": "^1.0.0-beta.6",
+    "reflect-metadata": "^0.1.13",
+    "rxjs": "^7.8.1",
+    "socket.io": "^4.6.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.0.0",
+    "@nestjs/schematics": "^10.0.0",
+    "@types/node": "^20.0.0",
+    "@types/uuid": "^9.0.0",
+    "prisma": "^5.0.0",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.0.0"
+  }
+}

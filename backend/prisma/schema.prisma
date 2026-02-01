@@ -1,0 +1,33 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Game {
+  id            String   @id @default(uuid())
+  whitePlayerId String
+  blackPlayerId String
+  currentTurn   String
+  fen           String
+  pgn           String   @default("")
+  status        String
+  winner        String?
+  endReason     String?
+  moveHistory   String[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("games")
+}
+
+model WaitingPlayer {
+  id        String   @id @default(uuid())
+  playerId  String   @unique
+  createdAt DateTime @default(now())
+
+  @@map("waiting_players")
+}
