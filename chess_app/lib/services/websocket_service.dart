@@ -1,58 +1,76 @@
 import 'dart:async';
-import 'dart:convert';
-import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:socket_io_client/socket_io_client.dart' as IO;
 import '../config/api_config.dart';
 
 class WebSocketService {
-  WebSocketChannel? _channel;
+  IO.Socket? _socket;
   final _messageController = StreamController<Map<String, dynamic>>.broadcast();
   
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
   
-  bool get isConnected => _channel != null;
+  bool get isConnected => _socket?.connected ?? false;
 
   void connect() {
     try {
-      _channel = WebSocketChannel.connect(Uri.parse(ApiConfig.wsUrl));
-      
-      _channel!.stream.listen(
-        (message) {
-          final data = jsonDecode(message as String);
-          _messageController.add(data);
-        },
-        onError: (error) {
-          print('WebSocket error: $error');
-        },
-        onDone: () {
-          print('WebSocket connection closed');
-          _channel = null;
-        },
-      );
-    } catch (e) {
-      print('Failed to connect WebSocket: $e');
-    }
-  }
-
-  void send(String event, Map<String, dynamic> data) {
-    if (_channel != null) {
-      final message = jsonEncode({
-        'event': event,
-        'data': data,
+      _socket = IO.io(ApiConfig.baseUrl, <String, dynamic>{
+        'transports': ['websocket'],
+        'autoConnect': true,
       });
-      _channel!.sink.add(message);
+
+      _socket!.onConnect((_) {
+        print('Socket.io connected');
+      });
+
+      _socket!.onDisconnect((_) {
+        print('Socket.io disconnected');
+      });
+
+      _socket!.onError((error) {
+        print('Socket.io error: $error');
+      });
+
+      _socket!.on('registered', (data) {
+        _messageController.add({'event': 'registered', 'data': data});
+      });
+
+      _socket!.on('gameStarted', (data) {
+        _messageController.add({'event': 'gameStarted', 'data': data});
+      });
+
+      _socket!.on('playerJoined', (data) {
+        _messageController.add({'event': 'playerJoined', 'data': data});
+      });
+
+      _socket!.on('moveMade', (data) {
+        _messageController.add({'event': 'moveMade', 'data': data});
+      });
+
+      _socket!.on('yourTurn', (data) {
+        _messageController.add({'event': 'yourTurn', 'data': data});
+      });
+
+      _socket!.on('gameOver', (data) {
+        _messageController.add({'event': 'gameOver', 'data': data});
+      });
+
+      _socket!.on('moveError', (data) {
+        _messageController.add({'event': 'moveError', 'data': data});
+      });
+    } catch (e) {
+      print('Failed to connect Socket.io: $e');
     }
   }
 
   void register(String playerId) {
-    send('register', {'playerId': playerId});
+    _socket?.emit('register', {'playerId': playerId});
   }
 
   void joinGame(String gameId, String playerId) {
-    send('joinGame', {'gameId': gameId, 'playerId': playerId});
+    _socket?.emit('joinGame', {'gameId': gameId, 'playerId': playerId});
   }
 
   void makeMove(String gameId, String playerId, Map<String, String> move) {
-    send('makeMove', {
+    _socket?.emit('makeMove', {
       'gameId': gameId,
       'playerId': playerId,
       'move': move,
@@ -60,7 +78,8 @@ class WebSocketService {
   }
 
   void dispose() {
-    _channel?.sink.close();
+    _socket?.disconnect();
+    _socket?.dispose();
     _messageController.close();
   }
 }

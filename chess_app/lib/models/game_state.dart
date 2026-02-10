@@ -1,3 +1,7 @@
+class _Undefined {
+  const _Undefined();
+}
+
 enum GameStatus {
   waiting,
   inProgress,
@@ -38,7 +42,7 @@ class GameState {
     String? gameId,
     String? whitePlayerId,
     String? blackPlayerId,
-    String? currentTurn,
+    Object? currentTurn = const _Undefined(),
     String? fen,
     String? pgn,
     GameStatus? status,
@@ -50,7 +54,7 @@ class GameState {
       gameId: gameId ?? this.gameId,
       whitePlayerId: whitePlayerId ?? this.whitePlayerId,
       blackPlayerId: blackPlayerId ?? this.blackPlayerId,
-      currentTurn: currentTurn ?? this.currentTurn,
+      currentTurn: currentTurn is _Undefined ? this.currentTurn : currentTurn as String?,
       fen: fen ?? this.fen,
       pgn: pgn ?? this.pgn,
       status: status ?? this.status,

@@ -65,13 +65,17 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { gameId: string; playerId: string; move: MoveDto },
     @ConnectedSocket() client: Socket,
   ) {
+    console.log('Move received:', data);
     const result = await this.gameService.makeMove(
       data.gameId,
       data.playerId,
       data.move,
     );
 
+    console.log('Move result:', result);
+
     if (result.success) {
+      console.log('Broadcasting move to room:', data.gameId);
       this.server.to(data.gameId).emit('moveMade', {
         playerId: data.playerId,
         move: data.move,
@@ -119,15 +123,26 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   notifyGameStart(gameId: string, whitePlayerId: string, blackPlayerId: string) {
-    this.server.to(gameId).emit('gameStarted', {
-      gameId,
-      whitePlayerId,
-      blackPlayerId,
-    });
-
     const whiteSocket = this.playerSockets.get(whitePlayerId);
+    const blackSocket = this.playerSockets.get(blackPlayerId);
+
     if (whiteSocket) {
+      whiteSocket.join(gameId);
+      whiteSocket.emit('gameStarted', {
+        gameId,
+        whitePlayerId,
+        blackPlayerId,
+      });
       whiteSocket.emit('yourTurn', { gameId });
+    }
+
+    if (blackSocket) {
+      blackSocket.join(gameId);
+      blackSocket.emit('gameStarted', {
+        gameId,
+        whitePlayerId,
+        blackPlayerId,
+      });
     }
   }
 }

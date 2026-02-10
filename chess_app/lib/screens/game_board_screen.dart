@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_chess_board/flutter_chess_board.dart';
 import '../models/game_state.dart';
 import '../providers/game_provider.dart';
+import '../widgets/custom_chess_board.dart';
 
 class GameBoardScreen extends ConsumerStatefulWidget {
   const GameBoardScreen({super.key});
@@ -12,18 +12,8 @@ class GameBoardScreen extends ConsumerStatefulWidget {
 }
 
 class _GameBoardScreenState extends ConsumerState<GameBoardScreen> {
-  late ChessBoardController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = ChessBoardController();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
+  void _onMove(String from, String to, {String? promotion}) {
+    ref.read(gameStateProvider.notifier).makeMove(from, to, promotion: promotion);
   }
 
   void _showGameOverDialog(String message) {
@@ -61,10 +51,6 @@ class _GameBoardScreenState extends ConsumerState<GameBoardScreen> {
     final gameState = ref.watch(gameStateProvider);
 
     ref.listen<GameState>(gameStateProvider, (previous, next) {
-      if (next.fen != previous?.fen) {
-        _controller.loadFen(next.fen);
-      }
-
       if (next.status == GameStatus.completed) {
         String message = 'Game Over!';
         if (next.endReason == 'checkmate') {
@@ -92,7 +78,7 @@ class _GameBoardScreenState extends ConsumerState<GameBoardScreen> {
     });
 
     final isMyTurn = gameState.isMyTurn;
-    final myColor = gameState.myColor;
+    final myColor = gameState.myColor ?? PlayerColor.white;
 
     return Scaffold(
       appBar: AppBar(
@@ -159,31 +145,11 @@ class _GameBoardScreenState extends ConsumerState<GameBoardScreen> {
             child: Center(
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
-                child: ChessBoard(
-                  controller: _controller,
-                  boardColor: BoardColor.brown,
-                  boardOrientation: myColor == PlayerColor.white 
-                      ? PlayerColor.white 
-                      : PlayerColor.black,
-                  onMove: (move) {
-                    if (!isMyTurn) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Wait for your turn!'),
-                          duration: Duration(seconds: 1),
-                          backgroundColor: Colors.orange,
-                        ),
-                      );
-                      _controller.loadFen(gameState.fen);
-                      return;
-                    }
-
-                    ref.read(gameStateProvider.notifier).makeMove(
-                      move.from,
-                      move.to,
-                      promotion: move.promotion?.name,
-                    );
-                  },
+                child: CustomChessBoard(
+                  fen: gameState.fen,
+                  onMove: _onMove,
+                  isWhite: myColor == PlayerColor.white,
+                  isMyTurn: isMyTurn,
                 ),
               ),
             ),

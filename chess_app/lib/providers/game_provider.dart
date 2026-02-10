@@ -90,18 +90,26 @@ class GameStateNotifier extends StateNotifier<GameState> {
   void _handleMoveMade(Map<String, dynamic> data) {
     final fen = data['fen'] as String?;
     final pgn = data['pgn'] as String?;
+    final playerId = data['playerId'] as String?;
 
     if (fen != null) {
-      state = state.copyWith(fen: fen, pgn: pgn ?? '');
+      // If the move was made by us, clear our turn (opponent's turn now)
+      // If the move was made by opponent, keep currentTurn as is (we'll get yourTurn event if it's our turn)
+      if (playerId == _playerId) {
+        state = state.copyWith(
+          fen: fen, 
+          pgn: pgn ?? '',
+          currentTurn: null, // Clear turn, will be set by yourTurn event
+        );
+      } else {
+        state = state.copyWith(fen: fen, pgn: pgn ?? '');
+      }
     }
   }
 
   void _handleYourTurn(Map<String, dynamic> data) {
-    final nextTurn = state.myColor == PlayerColor.white
-        ? state.whitePlayerId
-        : state.blackPlayerId;
-    
-    state = state.copyWith(currentTurn: nextTurn);
+    // When we receive 'yourTurn', it means it's OUR turn
+    state = state.copyWith(currentTurn: _playerId);
   }
 
   void _handleGameOver(Map<String, dynamic> data) {
@@ -121,6 +129,9 @@ class GameStateNotifier extends StateNotifier<GameState> {
 
   Future<void> joinWaitingRoom() async {
     try {
+      // Wait for WebSocket to be fully connected
+      await Future.delayed(const Duration(milliseconds: 500));
+      
       final result = await _apiService.joinWaitingRoom(_playerId);
       final status = result['status'] as String;
 
