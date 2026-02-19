@@ -72,13 +72,33 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('register')
-  handleRegister(
+  async handleRegister(
     @MessageBody() data: { playerId: string },
     @ConnectedSocket() client: Socket,
   ) {
     this.playerSockets.set(data.playerId, client);
     this.socketToPlayer.set(client.id, data.playerId);
     client.emit('registered', { playerId: data.playerId });
+    
+    console.log(`Player ${data.playerId} registered, checking for pending games...`);
+    
+    // Check if this player has a pending game
+    const game = await this.gameService.findActiveGameByPlayer(data.playerId);
+    if (game) {
+      console.log(`Found pending game ${game.id} for player ${data.playerId}, notifying...`);
+      
+      client.join(game.id);
+      client.emit('gameStarted', {
+        gameId: game.id,
+        whitePlayerId: game.whitePlayerId,
+        blackPlayerId: game.blackPlayerId,
+      });
+      
+      // If this is the white player, also send yourTurn
+      if (game.whitePlayerId === data.playerId) {
+        client.emit('yourTurn', { gameId: game.id });
+      }
+    }
   }
 
   @SubscribeMessage('joinGame')
@@ -182,8 +202,13 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   notifyGameStart(gameId: string, whitePlayerId: string, blackPlayerId: string) {
+    console.log(`Notifying game start for game ${gameId}`);
+    console.log(`White player: ${whitePlayerId}, Black player: ${blackPlayerId}`);
+    
     const whiteSocket = this.playerSockets.get(whitePlayerId);
     const blackSocket = this.playerSockets.get(blackPlayerId);
+
+    console.log(`White socket found: ${!!whiteSocket}, Black socket found: ${!!blackSocket}`);
 
     if (whiteSocket) {
       whiteSocket.join(gameId);
@@ -193,6 +218,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         blackPlayerId,
       });
       whiteSocket.emit('yourTurn', { gameId });
+      console.log(`Emitted gameStarted to white player ${whitePlayerId}`);
+    } else {
+      console.log(`WARNING: White player socket not found for ${whitePlayerId}`);
     }
 
     if (blackSocket) {
@@ -202,6 +230,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         whitePlayerId,
         blackPlayerId,
       });
+      console.log(`Emitted gameStarted to black player ${blackPlayerId}`);
+    } else {
+      console.log(`WARNING: Black player socket not found for ${blackPlayerId}`);
     }
   }
 }

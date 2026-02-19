@@ -5,6 +5,7 @@ import '../models/game_state.dart';
 import '../services/api_service.dart';
 import '../services/websocket_service.dart';
 import '../main.dart';
+import '../screens/game_board_screen.dart';
 
 final playerIdProvider = StateProvider<String>((ref) => const Uuid().v4());
 
@@ -77,6 +78,10 @@ class GameStateNotifier extends StateNotifier<GameState> {
   }
 
   void _handleGameStarted(Map<String, dynamic> data) {
+    print('=== GAME STARTED EVENT RECEIVED ===');
+    print('Data: $data');
+    print('My player ID: $_playerId');
+    
     final gameId = data['gameId'] as String;
     final whitePlayerId = data['whitePlayerId'] as String;
     final blackPlayerId = data['blackPlayerId'] as String;
@@ -84,6 +89,10 @@ class GameStateNotifier extends StateNotifier<GameState> {
     final myColor = whitePlayerId == _playerId
         ? PlayerColor.white
         : PlayerColor.black;
+
+    print('Game ID: $gameId');
+    print('White: $whitePlayerId, Black: $blackPlayerId');
+    print('My color: $myColor');
 
     state = state.copyWith(
       gameId: gameId,
@@ -95,6 +104,27 @@ class GameStateNotifier extends StateNotifier<GameState> {
     );
 
     _wsService.joinGame(gameId, _playerId);
+    
+    // Navigate to game board using global navigator
+    final context = navigatorKey.currentContext;
+    print('Navigator context available: ${context != null}');
+    
+    if (context != null) {
+      print('Navigating to game board...');
+      
+      // Close any open dialogs first
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      
+      // Then navigate to game board
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => const GameBoardScreen(),
+        ),
+      );
+      print('Navigation pushed');
+    } else {
+      print('ERROR: Navigator context is null, cannot navigate!');
+    }
   }
 
   void _handleMoveMade(Map<String, dynamic> data) {
@@ -203,6 +233,39 @@ class GameStateNotifier extends StateNotifier<GameState> {
       }
     } catch (e) {
       print('Error joining waiting room: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> invitePlayer(String invitedPlayerId) async {
+    try {
+      // Ensure WebSocket is registered before inviting
+      await Future.delayed(const Duration(milliseconds: 1000));
+      
+      final result = await _apiService.invitePlayer(_playerId, invitedPlayerId);
+      
+      final gameId = result['gameId'] as String;
+      final whitePlayerId = result['whitePlayerId'] as String;
+      final blackPlayerId = result['blackPlayerId'] as String;
+      
+      final myColor = whitePlayerId == _playerId 
+          ? PlayerColor.white 
+          : PlayerColor.black;
+
+      state = state.copyWith(
+        gameId: gameId,
+        whitePlayerId: whitePlayerId,
+        blackPlayerId: blackPlayerId,
+        currentTurn: whitePlayerId,
+        status: GameStatus.inProgress,
+        myColor: myColor,
+      );
+
+      _wsService.joinGame(gameId, _playerId);
+      
+      return {'success': true, 'gameId': gameId};
+    } catch (e) {
+      print('Error inviting player: $e');
+      return {'success': false, 'error': e.toString()};
     }
   }
 

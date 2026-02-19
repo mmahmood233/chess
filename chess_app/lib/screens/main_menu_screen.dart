@@ -1,14 +1,40 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/game_provider.dart';
+import '../models/game_state.dart';
 import 'waiting_room_screen.dart';
+import 'game_board_screen.dart';
 
-class MainMenuScreen extends ConsumerWidget {
+class MainMenuScreen extends ConsumerStatefulWidget {
   const MainMenuScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<MainMenuScreen> createState() => _MainMenuScreenState();
+}
+
+class _MainMenuScreenState extends ConsumerState<MainMenuScreen> {
+  bool _hasCheckedPendingGame = false;
+
+  @override
+  Widget build(BuildContext context) {
     final playerId = ref.watch(playerIdProvider);
+    final gameState = ref.watch(gameStateProvider);
+
+    // Check for pending games once after a delay
+    if (!_hasCheckedPendingGame) {
+      _hasCheckedPendingGame = true;
+      Future.delayed(const Duration(milliseconds: 1500), () {
+        if (mounted && gameState.status == GameStatus.inProgress) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const GameBoardScreen(),
+            ),
+          );
+        }
+      });
+    }
 
     return Scaffold(
       body: Container(
@@ -84,22 +110,30 @@ class MainMenuScreen extends ConsumerWidget {
                   SizedBox(
                     width: double.infinity,
                     height: 56,
+                    child: ElevatedButton(
+                      onPressed: () => _showInviteDialog(context, ref),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Invite Friend',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
                     child: OutlinedButton(
-                      onPressed: () {
-                        showDialog(
-                          context: context,
-                          builder: (context) => AlertDialog(
-                            title: const Text('Your Player ID'),
-                            content: SelectableText(playerId),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.pop(context),
-                                child: const Text('Close'),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
+                      onPressed: () => _showPlayerIdDialog(context, playerId),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.white,
                         side: const BorderSide(color: Colors.white, width: 2),
@@ -121,6 +155,137 @@ class MainMenuScreen extends ConsumerWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  void _showPlayerIdDialog(BuildContext context, String playerId) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Your Player ID'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Share this ID with friends to invite them:'),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: SelectableText(
+                playerId,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: playerId));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Player ID copied to clipboard!'),
+                  duration: Duration(seconds: 2),
+                ),
+              );
+            },
+            child: const Text('Copy'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showInviteDialog(BuildContext context, WidgetRef ref) {
+    final controller = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Invite Friend'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Enter your friend\'s Player ID:'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              decoration: InputDecoration(
+                hintText: 'Player ID',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              autofocus: true,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final invitedId = controller.text.trim();
+              if (invitedId.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Please enter a Player ID'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+                return;
+              }
+
+              Navigator.pop(context);
+              
+              // Show loading
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (context) => const Center(
+                  child: CircularProgressIndicator(),
+                ),
+              );
+
+              final result = await ref.read(gameStateProvider.notifier).invitePlayer(invitedId);
+              
+              Navigator.pop(context); // Close loading
+
+              if (result['success'] == true) {
+                // Navigate to game board
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const GameBoardScreen(),
+                  ),
+                );
+              } else {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Failed to invite player: ${result['error']}'),
+                    backgroundColor: Colors.red,
+                  ),
+                );
+              }
+            },
+            child: const Text('Invite'),
+          ),
+        ],
       ),
     );
   }
