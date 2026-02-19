@@ -16,7 +16,7 @@ class _GameBoardScreenState extends ConsumerState<GameBoardScreen> {
     ref.read(gameStateProvider.notifier).makeMove(from, to, promotion: promotion);
   }
 
-  void _showGameOverDialog(String message) {
+  void _showGameOverDialog(String message, {bool returnToMenu = false}) {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -27,9 +27,13 @@ class _GameBoardScreenState extends ConsumerState<GameBoardScreen> {
           TextButton(
             onPressed: () {
               ref.read(gameStateProvider.notifier).resetGame();
-              Navigator.of(context).popUntil((route) => route.isFirst);
+              if (returnToMenu) {
+                Navigator.of(context).popUntil((route) => route.isFirst);
+              } else {
+                Navigator.of(context).pop();
+              }
             },
-            child: const Text('Back to Menu'),
+            child: const Text('OK'),
           ),
         ],
       ),
@@ -49,10 +53,17 @@ class _GameBoardScreenState extends ConsumerState<GameBoardScreen> {
   @override
   Widget build(BuildContext context) {
     final gameState = ref.watch(gameStateProvider);
+    
+    print('Building GameBoardScreen - status: ${gameState.status}, endReason: ${gameState.endReason}');
 
     ref.listen<GameState>(gameStateProvider, (previous, next) {
-      if (next.status == GameStatus.completed) {
+      print('GameState listen triggered - prev: ${previous?.status}/${previous?.endReason}, next: ${next.status}/${next.endReason}');
+      
+      if (next.status == GameStatus.completed && previous?.status != GameStatus.completed) {
+        print('Game completed detected!');
         String message = 'Game Over!';
+        bool shouldReturnToMenu = false;
+        
         if (next.endReason == 'checkmate') {
           final didIWin = next.winner == 
               (next.myColor == PlayerColor.white ? next.whitePlayerId : next.blackPlayerId);
@@ -65,10 +76,16 @@ class _GameBoardScreenState extends ConsumerState<GameBoardScreen> {
           message = 'Draw by threefold repetition!';
         } else if (next.endReason == 'insufficient_material') {
           message = 'Draw by insufficient material!';
+        } else if (next.endReason == 'opponent_left') {
+          print('Opponent left detected! Showing dialog...');
+          message = 'Your opponent has left the game. You win!';
+          shouldReturnToMenu = true;
         }
         
+        print('Showing game over dialog: $message');
         Future.delayed(const Duration(milliseconds: 500), () {
-          _showGameOverDialog(message);
+          print('Calling _showGameOverDialog');
+          _showGameOverDialog(message, returnToMenu: shouldReturnToMenu);
         });
       }
 
@@ -102,7 +119,8 @@ class _GameBoardScreenState extends ConsumerState<GameBoardScreen> {
                     ),
                     TextButton(
                       onPressed: () {
-                        ref.read(gameStateProvider.notifier).resetGame();
+                        Navigator.pop(context);
+                        ref.read(gameStateProvider.notifier).leaveGame();
                         Navigator.of(context).popUntil((route) => route.isFirst);
                       },
                       child: const Text('Leave'),

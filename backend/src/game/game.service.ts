@@ -116,4 +116,34 @@ export class GameService {
       where: { id: gameId },
     });
   }
+
+  async findActiveGameByPlayer(playerId: string): Promise<any> {
+    return this.prisma.game.findFirst({
+      where: {
+        OR: [
+          { whitePlayerId: playerId },
+          { blackPlayerId: playerId },
+        ],
+        status: GameStatus.IN_PROGRESS,
+      },
+    });
+  }
+
+  async abandonGame(gameId: string, playerId: string): Promise<void> {
+    const game = await this.getGame(gameId);
+    if (!game) return;
+
+    const winner = game.whitePlayerId === playerId 
+      ? game.blackPlayerId 
+      : game.whitePlayerId;
+
+    await this.prisma.game.update({
+      where: { id: gameId },
+      data: {
+        status: GameStatus.COMPLETED,
+        winner,
+        endReason: 'opponent_left',
+      },
+    });
+  }
 }

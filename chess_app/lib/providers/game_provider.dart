@@ -1,8 +1,10 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import '../models/game_state.dart';
 import '../services/api_service.dart';
 import '../services/websocket_service.dart';
+import '../main.dart';
 
 final playerIdProvider = StateProvider<String>((ref) => const Uuid().v4());
 
@@ -26,6 +28,7 @@ class GameStateNotifier extends StateNotifier<GameState> {
   final WebSocketService _wsService;
   final ApiService _apiService;
   final String _playerId;
+  bool _opponentLeftHandled = false;
 
   GameStateNotifier(this._wsService, this._apiService, this._playerId)
       : super(GameState()) {
@@ -34,7 +37,11 @@ class GameStateNotifier extends StateNotifier<GameState> {
 
   void _initWebSocket() {
     _wsService.connect();
-    _wsService.register(_playerId);
+    
+    // Wait for connection before registering
+    Future.delayed(const Duration(milliseconds: 500), () {
+      _wsService.register(_playerId);
+    });
 
     _wsService.messages.listen((message) {
       _handleWebSocketMessage(message);
@@ -62,6 +69,9 @@ class GameStateNotifier extends StateNotifier<GameState> {
         break;
       case 'moveError':
         _handleMoveError(data);
+        break;
+      case 'opponentLeft':
+        _handleOpponentLeft(data);
         break;
     }
   }
@@ -127,6 +137,45 @@ class GameStateNotifier extends StateNotifier<GameState> {
     print('Move error: ${data['error']}');
   }
 
+  void _handleOpponentLeft(Map<String, dynamic> data) {
+    print('Opponent left event received: $data');
+    _opponentLeftHandled = true;
+    state = state.copyWith(
+      status: GameStatus.completed,
+      endReason: 'opponent_left',
+      winner: _playerId,
+    );
+    print('Game state updated to completed with opponent_left reason');
+    
+    // Show notification and navigate back to menu
+    final context = navigatorKey.currentContext;
+    if (context != null) {
+      print('Showing opponent left notification from provider');
+      
+      // Show snackbar notification
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Your opponent has left the game. You win!'),
+          duration: const Duration(seconds: 5),
+          backgroundColor: Colors.green,
+          action: SnackBarAction(
+            label: 'OK',
+            textColor: Colors.white,
+            onPressed: () {},
+          ),
+        ),
+      );
+      
+      // Navigate back to main menu after a delay
+      Future.delayed(const Duration(seconds: 2), () {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+        resetGame();
+      });
+    } else {
+      print('ERROR: Navigator context is null!');
+    }
+  }
+
   Future<void> joinWaitingRoom() async {
     try {
       // Wait for WebSocket to be fully connected
@@ -179,7 +228,15 @@ class GameStateNotifier extends StateNotifier<GameState> {
     );
   }
 
+  void leaveGame() {
+    if (state.gameId != null) {
+      _wsService.leaveGame(state.gameId!, _playerId);
+    }
+    resetGame();
+  }
+
   void resetGame() {
+    _opponentLeftHandled = false;
     state = GameState();
   }
 }

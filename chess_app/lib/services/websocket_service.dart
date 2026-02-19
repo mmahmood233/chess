@@ -56,6 +56,10 @@ class WebSocketService {
       _socket!.on('moveError', (data) {
         _messageController.add({'event': 'moveError', 'data': data});
       });
+
+      _socket!.on('opponentLeft', (data) {
+        _messageController.add({'event': 'opponentLeft', 'data': data});
+      });
     } catch (e) {
       print('Failed to connect Socket.io: $e');
     }
@@ -74,6 +78,13 @@ class WebSocketService {
       'gameId': gameId,
       'playerId': playerId,
       'move': move,
+    });
+  }
+
+  void leaveGame(String gameId, String playerId) {
+    _socket?.emit('leaveGame', {
+      'gameId': gameId,
+      'playerId': playerId,
     });
   }
 

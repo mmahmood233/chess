@@ -12,6 +12,12 @@ export class WaitingRoomService {
   ) {}
 
   async joinWaitingRoom(playerId: string): Promise<any> {
+    // Clean up any stale entries for this player first
+    await this.prisma.waitingPlayer.deleteMany({
+      where: { playerId },
+    });
+
+    // Check if player is already waiting
     const existingPlayer = await this.prisma.waitingPlayer.findUnique({
       where: { playerId },
     });

@@ -29,13 +29,46 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     console.log(`Client connected: ${client.id}`);
   }
 
-  handleDisconnect(client: Socket) {
+  async handleDisconnect(client: Socket) {
     const playerId = this.socketToPlayer.get(client.id);
+    console.log(`Client disconnected: ${client.id}, playerId: ${playerId}`);
+    
     if (playerId) {
-      this.playerSockets.delete(playerId);
-      this.socketToPlayer.delete(client.id);
+      try {
+        // Find if player is in an active game
+        const game = await this.gameService.findActiveGameByPlayer(playerId);
+        console.log(`Found active game for player ${playerId}:`, game?.id);
+        
+        if (game) {
+          // Notify the opponent that this player left
+          const opponentId = game.whitePlayerId === playerId 
+            ? game.blackPlayerId 
+            : game.whitePlayerId;
+          
+          console.log(`Notifying opponent ${opponentId} that player ${playerId} left`);
+          
+          const opponentSocket = this.playerSockets.get(opponentId);
+          if (opponentSocket) {
+            console.log(`Emitting opponentLeft event to ${opponentId}`);
+            opponentSocket.emit('opponentLeft', {
+              gameId: game.id,
+              message: 'Your opponent has left the game',
+            });
+          } else {
+            console.log(`Opponent socket not found for ${opponentId}`);
+          }
+          
+          // Mark game as abandoned
+          await this.gameService.abandonGame(game.id, playerId);
+          console.log(`Game ${game.id} marked as abandoned`);
+        }
+        
+        this.playerSockets.delete(playerId);
+        this.socketToPlayer.delete(client.id);
+      } catch (error) {
+        console.error('Error in handleDisconnect:', error);
+      }
     }
-    console.log(`Client disconnected: ${client.id}`);
   }
 
   @SubscribeMessage('register')
@@ -58,6 +91,32 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       playerId: data.playerId,
       gameId: data.gameId,
     });
+  }
+
+  @SubscribeMessage('leaveGame')
+  async handleLeaveGame(
+    @MessageBody() data: { gameId: string; playerId: string },
+    @ConnectedSocket() client: Socket,
+  ) {
+    console.log('Player leaving game:', data);
+    
+    const game = await this.gameService.getGame(data.gameId);
+    if (game) {
+      const opponentId = game.whitePlayerId === data.playerId 
+        ? game.blackPlayerId 
+        : game.whitePlayerId;
+      
+      const opponentSocket = this.playerSockets.get(opponentId);
+      if (opponentSocket) {
+        console.log(`Notifying opponent ${opponentId} that player left`);
+        opponentSocket.emit('opponentLeft', {
+          gameId: data.gameId,
+          message: 'Your opponent has left the game',
+        });
+      }
+      
+      await this.gameService.abandonGame(data.gameId, data.playerId);
+    }
   }
 
   @SubscribeMessage('makeMove')
