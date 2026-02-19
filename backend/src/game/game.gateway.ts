@@ -201,6 +201,37 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return 'Game over!';
   }
 
+  sendInvitation(inviterId: string, invitedId: string) {
+    console.log(`Sending invitation from ${inviterId} to ${invitedId}`);
+    
+    const invitedSocket = this.playerSockets.get(invitedId);
+    
+    if (invitedSocket) {
+      invitedSocket.emit('inviteReceived', {
+        inviterId,
+        invitedId,
+      });
+      console.log(`Invitation sent to ${invitedId}`);
+    } else {
+      console.log(`WARNING: Invited player socket not found for ${invitedId}`);
+    }
+  }
+
+  notifyInviteDeclined(inviterId: string, invitedId: string) {
+    console.log(`Notifying ${inviterId} that ${invitedId} declined the invitation`);
+    
+    const inviterSocket = this.playerSockets.get(inviterId);
+    
+    if (inviterSocket) {
+      inviterSocket.emit('inviteDeclined', {
+        invitedId,
+      });
+      console.log(`Decline notification sent to ${inviterId}`);
+    } else {
+      console.log(`WARNING: Inviter socket not found for ${inviterId}`);
+    }
+  }
+
   notifyGameStart(gameId: string, whitePlayerId: string, blackPlayerId: string) {
     console.log(`Notifying game start for game ${gameId}`);
     console.log(`White player: ${whitePlayerId}, Black player: ${blackPlayerId}`);

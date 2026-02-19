@@ -49,4 +49,30 @@ class ApiService {
       throw Exception('Failed to invite player: $e');
     }
   }
+
+  Future<Map<String, dynamic>> acceptInvite(
+      String inviterId, String invitedId) async {
+    try {
+      final response = await _dio.post(
+        '/waiting-room/accept-invite',
+        data: {'inviterId': inviterId, 'invitedId': invitedId},
+      );
+      return response.data;
+    } catch (e) {
+      throw Exception('Failed to accept invite: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>> declineInvite(
+      String inviterId, String invitedId) async {
+    try {
+      final response = await _dio.post(
+        '/waiting-room/decline-invite',
+        data: {'inviterId': inviterId, 'invitedId': invitedId},
+      );
+      return response.data;
+    } catch (e) {
+      throw Exception('Failed to decline invite: $e');
+    }
+  }
 }

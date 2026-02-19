@@ -74,6 +74,12 @@ class GameStateNotifier extends StateNotifier<GameState> {
       case 'opponentLeft':
         _handleOpponentLeft(data);
         break;
+      case 'inviteReceived':
+        _handleInviteReceived(data);
+        break;
+      case 'inviteDeclined':
+        _handleInviteDeclined(data);
+        break;
     }
   }
 
@@ -167,6 +173,63 @@ class GameStateNotifier extends StateNotifier<GameState> {
     print('Move error: ${data['error']}');
   }
 
+  void _handleInviteReceived(Map<String, dynamic> data) {
+    print('Invite received: $data');
+    final inviterId = data['inviterId'] as String;
+    
+    // Show invitation dialog
+    final context = navigatorKey.currentContext;
+    if (context != null) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: const Text('Game Invitation'),
+          content: Text('You have received a game invitation. Do you want to accept?'),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await _apiService.declineInvite(inviterId, _playerId);
+              },
+              child: const Text('Decline'),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                final result = await _apiService.acceptInvite(inviterId, _playerId);
+                // Game will be created and gameStarted event will be received
+              },
+              child: const Text('Accept'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  void _handleInviteDeclined(Map<String, dynamic> data) {
+    print('Invite declined: $data');
+    
+    final context = navigatorKey.currentContext;
+    if (context != null) {
+      // Show dialog instead of SnackBar for better visibility
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Invitation Declined'),
+          content: const Text('Your invitation was declined by the other player.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
   void _handleOpponentLeft(Map<String, dynamic> data) {
     print('Opponent left event received: $data');
     _opponentLeftHandled = true;
@@ -243,26 +306,13 @@ class GameStateNotifier extends StateNotifier<GameState> {
       
       final result = await _apiService.invitePlayer(_playerId, invitedPlayerId);
       
-      final gameId = result['gameId'] as String;
-      final whitePlayerId = result['whitePlayerId'] as String;
-      final blackPlayerId = result['blackPlayerId'] as String;
+      final status = result['status'] as String;
       
-      final myColor = whitePlayerId == _playerId 
-          ? PlayerColor.white 
-          : PlayerColor.black;
-
-      state = state.copyWith(
-        gameId: gameId,
-        whitePlayerId: whitePlayerId,
-        blackPlayerId: blackPlayerId,
-        currentTurn: whitePlayerId,
-        status: GameStatus.inProgress,
-        myColor: myColor,
-      );
-
-      _wsService.joinGame(gameId, _playerId);
-      
-      return {'success': true, 'gameId': gameId};
+      if (status == 'invitation_sent') {
+        return {'success': true, 'message': 'Invitation sent! Waiting for response...'};
+      } else {
+        return {'success': false, 'error': 'Unknown status: $status'};
+      }
     } catch (e) {
       print('Error inviting player: $e');
       return {'success': false, 'error': e.toString()};

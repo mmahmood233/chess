@@ -69,6 +69,17 @@ export class WaitingRoomService {
   }
 
   async invitePlayer(inviterId: string, invitedId: string): Promise<any> {
+    // Send invitation to the invited player instead of creating game immediately
+    this.gameGateway.sendInvitation(inviterId, invitedId);
+
+    return {
+      status: 'invitation_sent',
+      inviterId,
+      invitedId,
+    };
+  }
+
+  async acceptInvite(inviterId: string, invitedId: string): Promise<any> {
     const whitePlayerId = Math.random() > 0.5 ? inviterId : invitedId;
     const blackPlayerId = whitePlayerId === inviterId ? invitedId : inviterId;
 
@@ -81,6 +92,14 @@ export class WaitingRoomService {
       gameId: game.id,
       whitePlayerId,
       blackPlayerId,
+    };
+  }
+
+  async declineInvite(inviterId: string, invitedId: string): Promise<any> {
+    this.gameGateway.notifyInviteDeclined(inviterId, invitedId);
+
+    return {
+      status: 'invitation_declined',
     };
   }
 }

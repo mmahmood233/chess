@@ -253,28 +253,19 @@ class _MainMenuScreenState extends ConsumerState<MainMenuScreen> {
 
               Navigator.pop(context);
               
-              // Show loading
-              showDialog(
-                context: context,
-                barrierDismissible: false,
-                builder: (context) => const Center(
-                  child: CircularProgressIndicator(),
-                ),
-              );
-
+              // Send invitation without showing loading dialog
               final result = await ref.read(gameStateProvider.notifier).invitePlayer(invitedId);
               
-              Navigator.pop(context); // Close loading
-
-              if (result['success'] == true) {
-                // Navigate to game board
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => const GameBoardScreen(),
+              if (mounted && result['success'] == true) {
+                // Show success message - game will start when invited player accepts
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(result['message'] ?? 'Invitation sent!'),
+                    backgroundColor: Colors.green,
+                    duration: const Duration(seconds: 3),
                   ),
                 );
-              } else {
+              } else if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('Failed to invite player: ${result['error']}'),

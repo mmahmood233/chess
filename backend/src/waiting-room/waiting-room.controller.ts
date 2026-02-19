@@ -25,4 +25,14 @@ export class WaitingRoomController {
   async invitePlayer(@Body() body: { inviterId: string; invitedId: string }) {
     return this.waitingRoomService.invitePlayer(body.inviterId, body.invitedId);
   }
+
+  @Post('accept-invite')
+  async acceptInvite(@Body() body: { inviterId: string; invitedId: string }) {
+    return this.waitingRoomService.acceptInvite(body.inviterId, body.invitedId);
+  }
+
+  @Post('decline-invite')
+  async declineInvite(@Body() body: { inviterId: string; invitedId: string }) {
+    return this.waitingRoomService.declineInvite(body.inviterId, body.invitedId);
+  }
 }

@@ -60,8 +60,16 @@ class WebSocketService {
       _socket!.on('opponentLeft', (data) {
         _messageController.add({'event': 'opponentLeft', 'data': data});
       });
+
+      _socket!.on('inviteReceived', (data) {
+        _messageController.add({'event': 'inviteReceived', 'data': data});
+      });
+
+      _socket!.on('inviteDeclined', (data) {
+        _messageController.add({'event': 'inviteDeclined', 'data': data});
+      });
     } catch (e) {
-      print('Failed to connect Socket.io: $e');
+      print('Error connecting to WebSocket: $e');
     }
   }
 
