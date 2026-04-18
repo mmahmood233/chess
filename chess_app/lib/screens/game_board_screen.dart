@@ -12,40 +12,39 @@ class GameBoardScreen extends ConsumerStatefulWidget {
 }
 
 class _GameBoardScreenState extends ConsumerState<GameBoardScreen> {
+  bool _gameOverShown = false;
+
   void _onMove(String from, String to, {String? promotion}) {
     ref.read(gameStateProvider.notifier).makeMove(from, to, promotion: promotion);
   }
 
-  void _showGameOverDialog(String message, {bool returnToMenu = false}) {
+  void _showGameOverDialog(BuildContext context, String title, String message,
+      {bool returnToMenu = false}) {
+    if (_gameOverShown) return;
+    _gameOverShown = true;
+
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('Game Over'),
-        content: Text(message),
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.bold),
+          textAlign: TextAlign.center,
+        ),
+        content: Text(message, textAlign: TextAlign.center),
+        actionsAlignment: MainAxisAlignment.center,
         actions: [
-          TextButton(
+          ElevatedButton(
             onPressed: () {
+              Navigator.of(ctx).pop();
               ref.read(gameStateProvider.notifier).resetGame();
-              if (returnToMenu) {
-                Navigator.of(context).popUntil((route) => route.isFirst);
-              } else {
-                Navigator.of(context).pop();
-              }
+              Navigator.of(context).popUntil((route) => route.isFirst);
             },
-            child: const Text('OK'),
+            child: const Text('Back to Menu'),
           ),
         ],
-      ),
-    );
-  }
-
-  void _showTurnNotification() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Your turn!'),
-        duration: Duration(seconds: 2),
-        backgroundColor: Colors.green,
       ),
     );
   }
@@ -53,44 +52,25 @@ class _GameBoardScreenState extends ConsumerState<GameBoardScreen> {
   @override
   Widget build(BuildContext context) {
     final gameState = ref.watch(gameStateProvider);
-    
-    print('Building GameBoardScreen - status: ${gameState.status}, endReason: ${gameState.endReason}');
+    final notifier = ref.read(gameStateProvider.notifier);
 
     ref.listen<GameState>(gameStateProvider, (previous, next) {
-      print('GameState listen triggered - prev: ${previous?.status}/${previous?.endReason}, next: ${next.status}/${next.endReason}');
-      
-      if (next.status == GameStatus.completed && previous?.status != GameStatus.completed) {
-        print('Game completed detected!');
-        String message = 'Game Over!';
-        bool shouldReturnToMenu = false;
-        
-        if (next.endReason == 'checkmate') {
-          final didIWin = next.winner == 
-              (next.myColor == PlayerColor.white ? next.whitePlayerId : next.blackPlayerId);
-          message = didIWin ? 'You won by checkmate!' : 'You lost by checkmate!';
-        } else if (next.endReason == 'stalemate') {
-          message = 'Draw by stalemate!';
-        } else if (next.endReason == 'draw') {
-          message = 'Draw!';
-        } else if (next.endReason == 'threefold_repetition') {
-          message = 'Draw by threefold repetition!';
-        } else if (next.endReason == 'insufficient_material') {
-          message = 'Draw by insufficient material!';
-        } else if (next.endReason == 'opponent_left') {
-          print('Opponent left detected! Showing dialog...');
-          message = 'Your opponent has left the game. You win!';
-          shouldReturnToMenu = true;
-        }
-        
-        print('Showing game over dialog: $message');
-        Future.delayed(const Duration(milliseconds: 500), () {
-          print('Calling _showGameOverDialog');
-          _showGameOverDialog(message, returnToMenu: shouldReturnToMenu);
-        });
+      if (!mounted) return;
+      if (next.status == GameStatus.completed &&
+          previous?.status != GameStatus.completed) {
+        _resolveGameOver(context, next);
       }
 
+      // "Your turn" snackbar — only show when turn flips TO us
       if (previous?.isMyTurn == false && next.isMyTurn == true) {
-        _showTurnNotification();
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Your turn!'),
+            duration: Duration(seconds: 2),
+            backgroundColor: Colors.green,
+          ),
+        );
       }
     });
 
@@ -98,71 +78,68 @@ class _GameBoardScreenState extends ConsumerState<GameBoardScreen> {
     final myColor = gameState.myColor ?? PlayerColor.white;
 
     return Scaffold(
+      backgroundColor: Colors.grey.shade100,
       appBar: AppBar(
-        title: const Text('Chess Game'),
+        title: const Text('Chess'),
         backgroundColor: Colors.blue.shade900,
         foregroundColor: Colors.white,
         automaticallyImplyLeading: false,
         actions: [
           IconButton(
             icon: const Icon(Icons.exit_to_app),
-            onPressed: () {
-              showDialog(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Leave Game'),
-                  content: const Text('Are you sure you want to leave?'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('Cancel'),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        ref.read(gameStateProvider.notifier).leaveGame();
-                        Navigator.of(context).popUntil((route) => route.isFirst);
-                      },
-                      child: const Text('Leave'),
-                    ),
-                  ],
-                ),
-              );
-            },
+            tooltip: 'Leave game',
+            onPressed: () => _confirmLeave(context, notifier),
           ),
         ],
       ),
       body: Column(
         children: [
-          Container(
+          // Turn banner
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
             width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            color: isMyTurn ? Colors.green.shade100 : Colors.grey.shade200,
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+            color: isMyTurn ? Colors.green.shade700 : Colors.blueGrey.shade700,
             child: Column(
               children: [
                 Text(
-                  isMyTurn ? 'Your Turn' : 'Opponent\'s Turn',
-                  style: TextStyle(
-                    fontSize: 20,
+                  isMyTurn ? 'Your Turn' : "Opponent's Turn",
+                  style: const TextStyle(
+                    fontSize: 18,
                     fontWeight: FontWeight.bold,
-                    color: isMyTurn ? Colors.green.shade900 : Colors.grey.shade700,
+                    color: Colors.white,
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  'You are playing as ${myColor == PlayerColor.white ? 'White' : 'Black'}',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.grey.shade700,
-                  ),
+                const SizedBox(height: 2),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: 14,
+                      height: 14,
+                      decoration: BoxDecoration(
+                        color: myColor == PlayerColor.white
+                            ? Colors.white
+                            : Colors.black,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white54),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Playing as ${myColor == PlayerColor.white ? 'White' : 'Black'}',
+                      style: const TextStyle(fontSize: 13, color: Colors.white70),
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
+          // Board
           Expanded(
             child: Center(
               child: Padding(
-                padding: const EdgeInsets.all(16.0),
+                padding: const EdgeInsets.all(12.0),
                 child: CustomChessBoard(
                   fen: gameState.fen,
                   onMove: _onMove,
@@ -171,6 +148,80 @@ class _GameBoardScreenState extends ConsumerState<GameBoardScreen> {
                 ),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _resolveGameOver(BuildContext context, GameState state) {
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (!mounted) return;
+
+      final endReason = state.endReason ?? '';
+      String title;
+      String message;
+
+      switch (endReason) {
+        case 'checkmate':
+          final myPlayerId = state.myColor == PlayerColor.white
+              ? state.whitePlayerId
+              : state.blackPlayerId;
+          final didIWin = state.winner == myPlayerId;
+          title = didIWin ? 'You Win! 🏆' : 'You Lose';
+          message = didIWin
+              ? 'Congratulations! You won by checkmate!'
+              : 'You were checkmated. Better luck next time!';
+          break;
+        case 'stalemate':
+          title = 'Draw';
+          message = 'The game ended in a stalemate.';
+          break;
+        case 'draw':
+          title = 'Draw';
+          message = 'The game ended in a draw.';
+          break;
+        case 'threefold_repetition':
+          title = 'Draw';
+          message = 'Draw by threefold repetition.';
+          break;
+        case 'insufficient_material':
+          title = 'Draw';
+          message = 'Draw by insufficient material.';
+          break;
+        case 'opponent_left':
+          title = 'Opponent Left';
+          message = 'Your opponent left the game. You win!';
+          break;
+        default:
+          title = 'Game Over';
+          message = 'The game has ended.';
+      }
+
+      _showGameOverDialog(context, title, message, returnToMenu: true);
+    });
+  }
+
+  void _confirmLeave(BuildContext context, GameStateNotifier notifier) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Leave Game'),
+        content: const Text(
+            'Are you sure you want to resign? Your opponent will win.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () {
+              Navigator.pop(ctx);
+              notifier.leaveGame();
+              Navigator.of(context).popUntil((route) => route.isFirst);
+            },
+            child: const Text('Leave', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),

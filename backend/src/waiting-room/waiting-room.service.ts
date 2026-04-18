@@ -3,6 +3,8 @@ import { PrismaService } from '../prisma.service';
 import { GameService } from '../game/game.service';
 import { GameGateway } from '../game/game.gateway';
 
+const STARTING_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
 @Injectable()
 export class WaitingRoomService {
   constructor(
@@ -12,35 +14,36 @@ export class WaitingRoomService {
   ) {}
 
   async joinWaitingRoom(playerId: string): Promise<any> {
-    // Clean up any stale entries for this player first
-    await this.prisma.waitingPlayer.deleteMany({
-      where: { playerId },
+    // Remove any stale entries for this player
+    await this.prisma.waitingPlayer.deleteMany({ where: { playerId } });
+
+    // Don't match a player against themselves (shouldn't happen, but guard it)
+    const waitingPlayers = await this.prisma.waitingPlayer.findMany({
+      where: { NOT: { playerId } },
+      orderBy: { createdAt: 'asc' },
     });
-
-    // Check if player is already waiting
-    const existingPlayer = await this.prisma.waitingPlayer.findUnique({
-      where: { playerId },
-    });
-
-    if (existingPlayer) {
-      return { status: 'already_waiting', playerId };
-    }
-
-    const waitingPlayers = await this.prisma.waitingPlayer.findMany();
 
     if (waitingPlayers.length > 0) {
       const opponent = waitingPlayers[0];
-      
-      await this.prisma.waitingPlayer.delete({
-        where: { id: opponent.id },
-      });
 
+      await this.prisma.waitingPlayer.delete({ where: { id: opponent.id } });
+
+      // Randomly assign colours
       const whitePlayerId = Math.random() > 0.5 ? playerId : opponent.playerId;
-      const blackPlayerId = whitePlayerId === playerId ? opponent.playerId : playerId;
+      const blackPlayerId =
+        whitePlayerId === playerId ? opponent.playerId : playerId;
 
-      const game = await this.gameService.createGame(whitePlayerId, blackPlayerId);
+      const game = await this.gameService.createGame(
+        whitePlayerId,
+        blackPlayerId,
+      );
 
-      this.gameGateway.notifyGameStart(game.id, whitePlayerId, blackPlayerId);
+      this.gameGateway.notifyGameStart(
+        game.id,
+        whitePlayerId,
+        blackPlayerId,
+        game.fen ?? STARTING_FEN,
+      );
 
       return {
         status: 'game_created',
@@ -49,19 +52,15 @@ export class WaitingRoomService {
         blackPlayerId,
         yourColor: playerId === whitePlayerId ? 'white' : 'black',
       };
-    } else {
-      await this.prisma.waitingPlayer.create({
-        data: { playerId },
-      });
-
-      return { status: 'waiting', playerId };
     }
+
+    // No opponent yet — add to waiting list
+    await this.prisma.waitingPlayer.create({ data: { playerId } });
+    return { status: 'waiting', playerId };
   }
 
   async leaveWaitingRoom(playerId: string): Promise<void> {
-    await this.prisma.waitingPlayer.deleteMany({
-      where: { playerId },
-    });
+    await this.prisma.waitingPlayer.deleteMany({ where: { playerId } });
   }
 
   async getWaitingPlayers(): Promise<any[]> {
@@ -69,23 +68,23 @@ export class WaitingRoomService {
   }
 
   async invitePlayer(inviterId: string, invitedId: string): Promise<any> {
-    // Send invitation to the invited player instead of creating game immediately
     this.gameGateway.sendInvitation(inviterId, invitedId);
-
-    return {
-      status: 'invitation_sent',
-      inviterId,
-      invitedId,
-    };
+    return { status: 'invitation_sent', inviterId, invitedId };
   }
 
   async acceptInvite(inviterId: string, invitedId: string): Promise<any> {
     const whitePlayerId = Math.random() > 0.5 ? inviterId : invitedId;
-    const blackPlayerId = whitePlayerId === inviterId ? invitedId : inviterId;
+    const blackPlayerId =
+      whitePlayerId === inviterId ? invitedId : inviterId;
 
     const game = await this.gameService.createGame(whitePlayerId, blackPlayerId);
 
-    this.gameGateway.notifyGameStart(game.id, whitePlayerId, blackPlayerId);
+    this.gameGateway.notifyGameStart(
+      game.id,
+      whitePlayerId,
+      blackPlayerId,
+      game.fen ?? STARTING_FEN,
+    );
 
     return {
       status: 'game_created',
@@ -97,9 +96,6 @@ export class WaitingRoomService {
 
   async declineInvite(inviterId: string, invitedId: string): Promise<any> {
     this.gameGateway.notifyInviteDeclined(inviterId, invitedId);
-
-    return {
-      status: 'invitation_declined',
-    };
+    return { status: 'invitation_declined' };
   }
 }

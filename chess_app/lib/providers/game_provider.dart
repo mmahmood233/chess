@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:uuid/uuid.dart';
 import '../models/game_state.dart';
 import '../services/api_service.dart';
 import '../services/websocket_service.dart';
 import '../main.dart';
 import '../screens/game_board_screen.dart';
 
-final playerIdProvider = StateProvider<String>((ref) => const Uuid().v4());
+/// Overridden in main() with a persistent UUID from SharedPreferences.
+final playerIdProvider = Provider<String>((ref) => throw UnimplementedError('playerIdProvider must be overridden in main()'));
 
 final apiServiceProvider = Provider<ApiService>((ref) => ApiService());
 
@@ -29,107 +29,95 @@ class GameStateNotifier extends StateNotifier<GameState> {
   final WebSocketService _wsService;
   final ApiService _apiService;
   final String _playerId;
-  bool _opponentLeftHandled = false;
 
   GameStateNotifier(this._wsService, this._apiService, this._playerId)
       : super(GameState()) {
     _initWebSocket();
   }
 
-  void _initWebSocket() {
+  void _initWebSocket() async {
     _wsService.connect();
-    
-    // Wait for connection before registering
-    Future.delayed(const Duration(milliseconds: 500), () {
+    _wsService.messages.listen(_handleWebSocketMessage);
+    try {
+      await _wsService.waitForConnection();
       _wsService.register(_playerId);
-    });
-
-    _wsService.messages.listen((message) {
-      _handleWebSocketMessage(message);
-    });
+    } catch (_) {
+      // Will retry on reconnect event
+    }
   }
 
   void _handleWebSocketMessage(Map<String, dynamic> message) {
     final event = message['event'] as String?;
     final data = message['data'] as Map<String, dynamic>?;
 
-    if (event == null || data == null) return;
+    if (event == null) return;
 
     switch (event) {
+      case 'reconnected':
+        // Re-register after reconnect so server knows our socket again
+        _wsService.register(_playerId);
+        break;
       case 'gameStarted':
-        _handleGameStarted(data);
+        if (data != null) _handleGameStarted(data);
         break;
       case 'moveMade':
-        _handleMoveMade(data);
+        if (data != null) _handleMoveMade(data);
         break;
       case 'yourTurn':
-        _handleYourTurn(data);
+        if (data != null) _handleYourTurn(data);
         break;
       case 'gameOver':
-        _handleGameOver(data);
+        if (data != null) _handleGameOver(data);
         break;
       case 'moveError':
-        _handleMoveError(data);
+        if (data != null) _handleMoveError(data);
         break;
       case 'opponentLeft':
-        _handleOpponentLeft(data);
+        if (data != null) _handleOpponentLeft(data);
         break;
       case 'inviteReceived':
-        _handleInviteReceived(data);
+        if (data != null) _handleInviteReceived(data);
         break;
       case 'inviteDeclined':
-        _handleInviteDeclined(data);
+        if (data != null) _handleInviteDeclined(data);
         break;
     }
   }
 
   void _handleGameStarted(Map<String, dynamic> data) {
-    print('=== GAME STARTED EVENT RECEIVED ===');
-    print('Data: $data');
-    print('My player ID: $_playerId');
-    
     final gameId = data['gameId'] as String;
     final whitePlayerId = data['whitePlayerId'] as String;
     final blackPlayerId = data['blackPlayerId'] as String;
+    // Server sends current FEN (especially important for reconnections)
+    final fen = data['fen'] as String? ??
+        'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    // Server sends who has the current turn (important for reconnections)
+    final serverCurrentTurn = data['currentTurn'] as String? ?? whitePlayerId;
 
     final myColor = whitePlayerId == _playerId
         ? PlayerColor.white
         : PlayerColor.black;
 
-    print('Game ID: $gameId');
-    print('White: $whitePlayerId, Black: $blackPlayerId');
-    print('My color: $myColor');
-
     state = state.copyWith(
       gameId: gameId,
       whitePlayerId: whitePlayerId,
       blackPlayerId: blackPlayerId,
-      currentTurn: whitePlayerId,
+      currentTurn: serverCurrentTurn,
       status: GameStatus.inProgress,
       myColor: myColor,
+      fen: fen,
     );
 
     _wsService.joinGame(gameId, _playerId);
-    
-    // Navigate to game board using global navigator
+
+    // Navigate to game board from any screen
     final context = navigatorKey.currentContext;
-    print('Navigator context available: ${context != null}');
-    
     if (context != null) {
-      print('Navigating to game board...');
-      
-      // Close any open dialogs first
+      // Pop everything back to root (main menu), then push game board
       Navigator.of(context).popUntil((route) => route.isFirst);
-      
-      // Then navigate to game board
       Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (context) => const GameBoardScreen(),
-        ),
+        MaterialPageRoute(builder: (_) => const GameBoardScreen()),
       );
-      print('Navigation pushed');
-    } else {
-      print('ERROR: Navigator context is null, cannot navigate!');
     }
   }
 
@@ -138,146 +126,123 @@ class GameStateNotifier extends StateNotifier<GameState> {
     final pgn = data['pgn'] as String?;
     final playerId = data['playerId'] as String?;
 
-    if (fen != null) {
-      // If the move was made by us, clear our turn (opponent's turn now)
-      // If the move was made by opponent, keep currentTurn as is (we'll get yourTurn event if it's our turn)
-      if (playerId == _playerId) {
-        state = state.copyWith(
-          fen: fen, 
-          pgn: pgn ?? '',
-          currentTurn: null, // Clear turn, will be set by yourTurn event
-        );
-      } else {
-        state = state.copyWith(fen: fen, pgn: pgn ?? '');
-      }
+    if (fen == null) return;
+
+    if (playerId == _playerId) {
+      // Our move was confirmed — clear turn indicator; server will send yourTurn to opponent
+      state = state.copyWith(
+        fen: fen,
+        pgn: pgn ?? state.pgn,
+        currentTurn: null,
+      );
+    } else {
+      // Opponent made a move — update board; we'll get yourTurn if it's now our go
+      state = state.copyWith(fen: fen, pgn: pgn ?? state.pgn);
     }
   }
 
   void _handleYourTurn(Map<String, dynamic> data) {
-    // When we receive 'yourTurn', it means it's OUR turn
+    // Server tells us it's our turn — set currentTurn to our ID so isMyTurn becomes true
     state = state.copyWith(currentTurn: _playerId);
   }
 
   void _handleGameOver(Map<String, dynamic> data) {
-    final winner = data['winner'] as String?;
-    final endReason = data['endReason'] as String?;
-
     state = state.copyWith(
       status: GameStatus.completed,
-      winner: winner,
-      endReason: endReason,
+      winner: data['winner'] as String?,
+      endReason: data['endReason'] as String?,
+      currentTurn: null,
     );
   }
 
   void _handleMoveError(Map<String, dynamic> data) {
-    print('Move error: ${data['error']}');
+    final error = data['error'] as String? ?? 'Illegal move';
+    final context = navigatorKey.currentContext;
+    if (context != null) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error),
+          backgroundColor: Colors.red.shade700,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
   }
 
   void _handleInviteReceived(Map<String, dynamic> data) {
-    print('Invite received: $data');
     final inviterId = data['inviterId'] as String;
-    
-    // Show invitation dialog
     final context = navigatorKey.currentContext;
-    if (context != null) {
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          title: const Text('Game Invitation'),
-          content: Text('You have received a game invitation. Do you want to accept?'),
-          actions: [
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                await _apiService.declineInvite(inviterId, _playerId);
-              },
-              child: const Text('Decline'),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                final result = await _apiService.acceptInvite(inviterId, _playerId);
-                // Game will be created and gameStarted event will be received
-              },
-              child: const Text('Accept'),
-            ),
-          ],
-        ),
-      );
-    }
+    if (context == null) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Game Invitation'),
+        content: const Text('A player wants to challenge you to a game. Accept?'),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _apiService.declineInvite(inviterId, _playerId);
+            },
+            child: const Text('Decline'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _apiService.acceptInvite(inviterId, _playerId);
+              // gameStarted WS event will handle navigation
+            },
+            child: const Text('Accept'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _handleInviteDeclined(Map<String, dynamic> data) {
-    print('Invite declined: $data');
-    
     final context = navigatorKey.currentContext;
-    if (context != null) {
-      // Show dialog instead of SnackBar for better visibility
-      showDialog(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Invitation Declined'),
-          content: const Text('Your invitation was declined by the other player.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('OK'),
-            ),
-          ],
-        ),
-      );
-    }
+    if (context == null) return;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Invitation Declined'),
+        content: const Text('Your invitation was declined.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _handleOpponentLeft(Map<String, dynamic> data) {
-    print('Opponent left event received: $data');
-    _opponentLeftHandled = true;
     state = state.copyWith(
       status: GameStatus.completed,
       endReason: 'opponent_left',
       winner: _playerId,
+      currentTurn: null,
     );
-    print('Game state updated to completed with opponent_left reason');
-    
-    // Show notification and navigate back to menu
-    final context = navigatorKey.currentContext;
-    if (context != null) {
-      print('Showing opponent left notification from provider');
-      
-      // Show snackbar notification
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('Your opponent has left the game. You win!'),
-          duration: const Duration(seconds: 5),
-          backgroundColor: Colors.green,
-          action: SnackBarAction(
-            label: 'OK',
-            textColor: Colors.white,
-            onPressed: () {},
-          ),
-        ),
-      );
-      
-      // Navigate back to main menu after a delay
-      Future.delayed(const Duration(seconds: 2), () {
-        Navigator.of(context).popUntil((route) => route.isFirst);
-        resetGame();
-      });
-    } else {
-      print('ERROR: Navigator context is null!');
-    }
+    // The GameBoardScreen's ref.listen picks this up and shows the dialog
   }
+
+  // ── Public actions ──────────────────────────────────────────────────────────
 
   Future<void> joinWaitingRoom() async {
     try {
-      // Wait for WebSocket to be fully connected
-      await Future.delayed(const Duration(milliseconds: 500));
-      
+      await _wsService.waitForConnection();
       final result = await _apiService.joinWaitingRoom(_playerId);
       final status = result['status'] as String;
 
       if (status == 'game_created') {
+        // Game was created immediately (we were matched with a waiting player).
+        // The server also emits gameStarted via WebSocket — that handler
+        // will update state and navigate. We just ensure we're in the room.
         final gameId = result['gameId'] as String;
         final whitePlayerId = result['whitePlayerId'] as String;
         final blackPlayerId = result['blackPlayerId'] as String;
@@ -291,45 +256,45 @@ class GameStateNotifier extends StateNotifier<GameState> {
           status: GameStatus.inProgress,
           myColor: yourColor == 'white' ? PlayerColor.white : PlayerColor.black,
         );
-
         _wsService.joinGame(gameId, _playerId);
       }
+      // status == 'waiting' → just sit tight; server will emit gameStarted when matched
     } catch (e) {
-      print('Error joining waiting room: $e');
+      // Show error if waiting room call fails
+      final context = navigatorKey.currentContext;
+      if (context != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Connection error: ${e.toString().replaceAll('Exception: ', '')}'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
     }
   }
 
   Future<Map<String, dynamic>> invitePlayer(String invitedPlayerId) async {
     try {
-      // Ensure WebSocket is registered before inviting
-      await Future.delayed(const Duration(milliseconds: 1000));
-      
+      await _wsService.waitForConnection();
       final result = await _apiService.invitePlayer(_playerId, invitedPlayerId);
-      
       final status = result['status'] as String;
-      
       if (status == 'invitation_sent') {
         return {'success': true, 'message': 'Invitation sent! Waiting for response...'};
-      } else {
-        return {'success': false, 'error': 'Unknown status: $status'};
       }
+      return {'success': false, 'error': 'Unknown response'};
     } catch (e) {
-      print('Error inviting player: $e');
-      return {'success': false, 'error': e.toString()};
+      return {'success': false, 'error': e.toString().replaceAll('Exception: ', '')};
     }
   }
 
   Future<void> leaveWaitingRoom() async {
     try {
       await _apiService.leaveWaitingRoom(_playerId);
-    } catch (e) {
-      print('Error leaving waiting room: $e');
-    }
+    } catch (_) {}
   }
 
   void makeMove(String from, String to, {String? promotion}) {
     if (state.gameId == null) return;
-
     _wsService.makeMove(
       state.gameId!,
       _playerId,
@@ -349,7 +314,6 @@ class GameStateNotifier extends StateNotifier<GameState> {
   }
 
   void resetGame() {
-    _opponentLeftHandled = false;
     state = GameState();
   }
 }

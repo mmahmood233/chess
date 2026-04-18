@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/game_state.dart';
 import '../providers/game_provider.dart';
-import 'game_board_screen.dart';
 
 class WaitingRoomScreen extends ConsumerStatefulWidget {
   const WaitingRoomScreen({super.key});
@@ -29,25 +28,26 @@ class _WaitingRoomScreenState extends ConsumerState<WaitingRoomScreen> {
 
   @override
   void dispose() {
+    // Only leave waiting room on dispose if we're still actively waiting
+    // and the game hasn't started. If game started, we were already removed
+    // from the waiting list by the server.
     if (_isWaiting) {
-      ref.read(gameStateProvider.notifier).leaveWaitingRoom();
+      final gameStatus = ref.read(gameStateProvider).status;
+      if (gameStatus != GameStatus.inProgress) {
+        ref.read(gameStateProvider.notifier).leaveWaitingRoom();
+      }
     }
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final gameState = ref.watch(gameStateProvider);
-
+    // When the game starts the provider navigates via navigatorKey (popUntil + push).
+    // We only need to track _isWaiting so dispose doesn't double-call leave.
     ref.listen<GameState>(gameStateProvider, (previous, next) {
       if (next.status == GameStatus.inProgress && next.gameId != null) {
-        setState(() => _isWaiting = false);
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (context) => const GameBoardScreen(),
-          ),
-        );
+        if (mounted) setState(() => _isWaiting = false);
+        // Navigation is handled by the provider's _handleGameStarted.
       }
     });
 
@@ -74,9 +74,13 @@ class _WaitingRoomScreenState extends ConsumerState<WaitingRoomScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const CircularProgressIndicator(
-                  color: Colors.white,
-                  strokeWidth: 3,
+                const SizedBox(
+                  width: 60,
+                  height: 60,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 3,
+                  ),
                 ),
                 const SizedBox(height: 32),
                 const Text(
@@ -90,10 +94,7 @@ class _WaitingRoomScreenState extends ConsumerState<WaitingRoomScreen> {
                 const SizedBox(height: 16),
                 const Text(
                   'Please wait while we find you a match',
-                  style: TextStyle(
-                    fontSize: 16,
-                    color: Colors.white70,
-                  ),
+                  style: TextStyle(fontSize: 16, color: Colors.white70),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 48),
@@ -102,8 +103,8 @@ class _WaitingRoomScreenState extends ConsumerState<WaitingRoomScreen> {
                   height: 56,
                   child: OutlinedButton(
                     onPressed: () {
-                      ref.read(gameStateProvider.notifier).leaveWaitingRoom();
                       setState(() => _isWaiting = false);
+                      ref.read(gameStateProvider.notifier).leaveWaitingRoom();
                       Navigator.pop(context);
                     },
                     style: OutlinedButton.styleFrom(
@@ -115,10 +116,7 @@ class _WaitingRoomScreenState extends ConsumerState<WaitingRoomScreen> {
                     ),
                     child: const Text(
                       'Cancel',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                     ),
                   ),
                 ),
