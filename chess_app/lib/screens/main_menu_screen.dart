@@ -18,6 +18,10 @@ class MainMenuScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final playerId = ref.watch(playerIdProvider);
+    // Eagerly initialize the game notifier so the WebSocket connects and
+    // registers this player even before they tap any button.
+    // Without this, invites sent to a player on the main menu are silently dropped.
+    ref.watch(gameStateProvider);
 
     return Scaffold(
       backgroundColor: _bgDark,
