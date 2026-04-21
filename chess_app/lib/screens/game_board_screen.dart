@@ -1,8 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:chess_vectors_flutter/chess_vectors_flutter.dart';
 import '../models/game_state.dart';
 import '../providers/game_provider.dart';
 import '../widgets/custom_chess_board.dart';
+
+// Chess.com dark palette
+const _bgDark    = Color(0xFF312E2B);
+const _panelDark = Color(0xFF272522);
+const _green     = Color(0xFF769656);
 
 class GameBoardScreen extends ConsumerStatefulWidget {
   const GameBoardScreen({super.key});
@@ -18,211 +24,348 @@ class _GameBoardScreenState extends ConsumerState<GameBoardScreen> {
     ref.read(gameStateProvider.notifier).makeMove(from, to, promotion: promotion);
   }
 
-  void _showGameOverDialog(BuildContext context, String title, String message,
-      {bool returnToMenu = false}) {
-    if (_gameOverShown) return;
-    _gameOverShown = true;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.bold),
-          textAlign: TextAlign.center,
-        ),
-        content: Text(message, textAlign: TextAlign.center),
-        actionsAlignment: MainAxisAlignment.center,
-        actions: [
-          ElevatedButton(
-            onPressed: () {
-              Navigator.of(ctx).pop();
-              ref.read(gameStateProvider.notifier).resetGame();
-              Navigator.of(context).popUntil((route) => route.isFirst);
-            },
-            child: const Text('Back to Menu'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final gameState = ref.watch(gameStateProvider);
+    final gs = ref.watch(gameStateProvider);
     final notifier = ref.read(gameStateProvider.notifier);
+    final isMyTurn = gs.isMyTurn;
+    final myColor  = gs.myColor ?? PlayerColor.white;
+    final amWhite  = myColor == PlayerColor.white;
 
-    ref.listen<GameState>(gameStateProvider, (previous, next) {
+    ref.listen<GameState>(gameStateProvider, (prev, next) {
       if (!mounted) return;
       if (next.status == GameStatus.completed &&
-          previous?.status != GameStatus.completed) {
-        _resolveGameOver(context, next);
+          prev?.status != GameStatus.completed) {
+        _showGameOver(context, next);
       }
-
-      // "Your turn" snackbar — only show when turn flips TO us
-      if (previous?.isMyTurn == false && next.isMyTurn == true) {
+      if (prev?.isMyTurn == false && next.isMyTurn == true) {
         ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Your turn!'),
-            duration: Duration(seconds: 2),
-            backgroundColor: Colors.green,
+          SnackBar(
+            content: Row(
+              children: const [
+                Icon(Icons.timer, color: Colors.white, size: 18),
+                SizedBox(width: 8),
+                Text('Your turn!', style: TextStyle(fontWeight: FontWeight.bold)),
+              ],
+            ),
+            backgroundColor: _green,
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
     });
 
-    final isMyTurn = gameState.isMyTurn;
-    final myColor = gameState.myColor ?? PlayerColor.white;
+    // Opponent panel is always at the top; player panel at the bottom.
+    // The board is flipped for black automatically by CustomChessBoard.
+    final opponentColor = amWhite ? PlayerColor.black : PlayerColor.white;
 
     return Scaffold(
-      backgroundColor: Colors.grey.shade100,
+      backgroundColor: _bgDark,
       appBar: AppBar(
-        title: const Text('Chess'),
-        backgroundColor: Colors.blue.shade900,
+        backgroundColor: _panelDark,
         foregroundColor: Colors.white,
+        elevation: 0,
         automaticallyImplyLeading: false,
+        title: const Text(
+          'Chess',
+          style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1),
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.exit_to_app),
-            tooltip: 'Leave game',
+            icon: const Icon(Icons.flag_outlined),
+            tooltip: 'Resign',
             onPressed: () => _confirmLeave(context, notifier),
           ),
         ],
       ),
       body: Column(
         children: [
-          // Turn banner
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 300),
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-            color: isMyTurn ? Colors.green.shade700 : Colors.blueGrey.shade700,
-            child: Column(
-              children: [
-                Text(
-                  isMyTurn ? 'Your Turn' : "Opponent's Turn",
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 14,
-                      height: 14,
-                      decoration: BoxDecoration(
-                        color: myColor == PlayerColor.white
-                            ? Colors.white
-                            : Colors.black,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.white54),
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Playing as ${myColor == PlayerColor.white ? 'White' : 'Black'}',
-                      style: const TextStyle(fontSize: 13, color: Colors.white70),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+          // ── Opponent panel ─────────────────────────────────────────────────
+          _PlayerPanel(
+            color: opponentColor,
+            label: 'Opponent',
+            isTurn: !isMyTurn && gs.status == GameStatus.inProgress,
           ),
-          // Board
+
+          // ── Board ──────────────────────────────────────────────────────────
           Expanded(
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: CustomChessBoard(
-                  fen: gameState.fen,
-                  onMove: _onMove,
-                  isWhite: myColor == PlayerColor.white,
-                  isMyTurn: isMyTurn,
-                ),
+            child: Container(
+              color: _bgDark,
+              alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+              child: CustomChessBoard(
+                fen: gs.fen,
+                onMove: _onMove,
+                isWhite: amWhite,
+                isMyTurn: isMyTurn,
+                lastMoveFrom: gs.lastMoveFrom,
+                lastMoveTo: gs.lastMoveTo,
               ),
             ),
+          ),
+
+          // ── Player panel ───────────────────────────────────────────────────
+          _PlayerPanel(
+            color: myColor,
+            label: 'You',
+            isTurn: isMyTurn && gs.status == GameStatus.inProgress,
           ),
         ],
       ),
     );
   }
 
-  void _resolveGameOver(BuildContext context, GameState state) {
-    Future.delayed(const Duration(milliseconds: 400), () {
+  void _showGameOver(BuildContext context, GameState gs) {
+    if (_gameOverShown) return;
+    _gameOverShown = true;
+
+    Future.delayed(const Duration(milliseconds: 350), () {
       if (!mounted) return;
 
-      final endReason = state.endReason ?? '';
-      String title;
-      String message;
+      final myId = gs.myColor == PlayerColor.white
+          ? gs.whitePlayerId
+          : gs.blackPlayerId;
+      final didIWin = gs.winner != null && gs.winner == myId;
 
-      switch (endReason) {
+      String title;
+      String subtitle;
+      Color titleColor;
+      IconData icon;
+
+      switch (gs.endReason) {
         case 'checkmate':
-          final myPlayerId = state.myColor == PlayerColor.white
-              ? state.whitePlayerId
-              : state.blackPlayerId;
-          final didIWin = state.winner == myPlayerId;
-          title = didIWin ? 'You Win! 🏆' : 'You Lose';
-          message = didIWin
-              ? 'Congratulations! You won by checkmate!'
-              : 'You were checkmated. Better luck next time!';
+          title    = didIWin ? 'You Win!' : 'You Lose';
+          subtitle = didIWin ? 'Victory by checkmate' : 'Checkmated';
+          titleColor = didIWin ? _green : Colors.red.shade400;
+          icon = didIWin ? Icons.emoji_events : Icons.sentiment_dissatisfied;
           break;
         case 'stalemate':
-          title = 'Draw';
-          message = 'The game ended in a stalemate.';
+          title = 'Draw'; subtitle = 'Stalemate';
+          titleColor = Colors.orange; icon = Icons.handshake_outlined;
           break;
         case 'draw':
-          title = 'Draw';
-          message = 'The game ended in a draw.';
+          title = 'Draw'; subtitle = 'Agreement';
+          titleColor = Colors.orange; icon = Icons.handshake_outlined;
           break;
         case 'threefold_repetition':
-          title = 'Draw';
-          message = 'Draw by threefold repetition.';
+          title = 'Draw'; subtitle = 'Threefold repetition';
+          titleColor = Colors.orange; icon = Icons.handshake_outlined;
           break;
         case 'insufficient_material':
-          title = 'Draw';
-          message = 'Draw by insufficient material.';
+          title = 'Draw'; subtitle = 'Insufficient material';
+          titleColor = Colors.orange; icon = Icons.handshake_outlined;
           break;
         case 'opponent_left':
-          title = 'Opponent Left';
-          message = 'Your opponent left the game. You win!';
+          title = 'You Win!'; subtitle = 'Opponent resigned';
+          titleColor = _green; icon = Icons.emoji_events;
           break;
         default:
-          title = 'Game Over';
-          message = 'The game has ended.';
+          title = 'Game Over'; subtitle = '';
+          titleColor = Colors.white; icon = Icons.sports_esports;
       }
 
-      _showGameOverDialog(context, title, message, returnToMenu: true);
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        barrierColor: Colors.black87,
+        builder: (ctx) => Dialog(
+          backgroundColor: _panelDark,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 56, color: titleColor),
+                const SizedBox(height: 16),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                    color: titleColor,
+                  ),
+                ),
+                if (subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(fontSize: 16, color: Colors.white60),
+                  ),
+                ],
+                const SizedBox(height: 28),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                    ),
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      ref.read(gameStateProvider.notifier).resetGame();
+                      Navigator.of(context).popUntil((r) => r.isFirst);
+                    },
+                    child: const Text('Back to Menu',
+                        style: TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
     });
   }
 
   void _confirmLeave(BuildContext context, GameStateNotifier notifier) {
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Leave Game'),
-        content: const Text(
-            'Are you sure you want to resign? Your opponent will win.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
+      builder: (ctx) => Dialog(
+        backgroundColor: _panelDark,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.flag, color: Colors.white60, size: 40),
+              const SizedBox(height: 16),
+              const Text('Resign?',
+                  style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white)),
+              const SizedBox(height: 8),
+              const Text(
+                'Your opponent will win the game.',
+                style: TextStyle(color: Colors.white54),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Colors.white30),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red.shade700,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(ctx);
+                        notifier.leaveGame();
+                        Navigator.of(context).popUntil((r) => r.isFirst);
+                      },
+                      child: const Text('Resign'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () {
-              Navigator.pop(ctx);
-              notifier.leaveGame();
-              Navigator.of(context).popUntil((route) => route.isFirst);
-            },
-            child: const Text('Leave', style: TextStyle(color: Colors.white)),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Player panel widget ────────────────────────────────────────────────────────
+
+class _PlayerPanel extends StatelessWidget {
+  final PlayerColor color;
+  final String label;
+  final bool isTurn;
+
+  const _PlayerPanel({
+    required this.color,
+    required this.label,
+    required this.isTurn,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isWhite = color == PlayerColor.white;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 250),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: isTurn ? const Color(0xFF3D3A37) : _panelDark,
+        border: isTurn
+            ? Border(
+                left: BorderSide(color: _green, width: 3),
+              )
+            : null,
+      ),
+      child: Row(
+        children: [
+          // Piece icon
+          SizedBox(
+            width: 36,
+            height: 36,
+            child: isWhite ? WhiteKing(size: 32) : BlackKing(size: 32),
           ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: TextStyle(
+                  color: isTurn ? Colors.white : Colors.white54,
+                  fontSize: 15,
+                  fontWeight:
+                      isTurn ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+              Text(
+                isWhite ? 'White' : 'Black',
+                style: const TextStyle(color: Colors.white38, fontSize: 12),
+              ),
+            ],
+          ),
+          const Spacer(),
+          if (isTurn)
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: _green,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Text(
+                'Your Turn',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
         ],
       ),
     );

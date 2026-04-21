@@ -18,9 +18,9 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
-  /** playerId → connected Socket */
+  /** playerId → currently-active Socket */
   private playerSockets: Map<string, Socket> = new Map();
-  /** socketId → playerId */
+  /** socketId → playerId  (may contain stale entries for old sockets) */
   private socketToPlayer: Map<string, string> = new Map();
 
   constructor(private gameService: GameService) {}
@@ -31,33 +31,47 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleDisconnect(client: Socket) {
     const playerId = this.socketToPlayer.get(client.id);
-    console.log(`[WS] disconnected: ${client.id} (player ${playerId})`);
+    console.log(`[WS] disconnected: ${client.id} (player: ${playerId ?? 'unknown'})`);
 
-    if (playerId) {
-      try {
-        const game = await this.gameService.findActiveGameByPlayer(playerId);
-        if (game) {
-          const opponentId =
-            game.whitePlayerId === playerId
-              ? game.blackPlayerId
-              : game.whitePlayerId;
+    if (!playerId) return;
 
-          const opponentSocket = this.playerSockets.get(opponentId);
-          if (opponentSocket) {
-            opponentSocket.emit('opponentLeft', {
-              gameId: game.id,
-              message: 'Your opponent has disconnected.',
-            });
-          }
+    // Always remove the stale socketId → playerId entry.
+    this.socketToPlayer.delete(client.id);
 
-          await this.gameService.abandonGame(game.id, playerId);
+    // ── Race-condition guard ────────────────────────────────────────────────
+    // If the player already registered a NEW socket (reconnection) the
+    // playerSockets map points to the new socket, not this one.
+    // In that case this is a "stale disconnect" — do NOT touch playerSockets
+    // or abandon the game.
+    const currentSocket = this.playerSockets.get(playerId);
+    if (!currentSocket || currentSocket.id !== client.id) {
+      console.log(`[WS] Stale disconnect ignored for ${playerId} (already re-registered)`);
+      return;
+    }
+
+    // This socket IS the active one — the player truly left.
+    this.playerSockets.delete(playerId);
+
+    try {
+      const game = await this.gameService.findActiveGameByPlayer(playerId);
+      if (game) {
+        const opponentId =
+          game.whitePlayerId === playerId
+            ? game.blackPlayerId
+            : game.whitePlayerId;
+
+        const opponentSocket = this.playerSockets.get(opponentId);
+        if (opponentSocket) {
+          opponentSocket.emit('opponentLeft', {
+            gameId: game.id,
+            message: 'Your opponent has disconnected.',
+          });
         }
-      } catch (err) {
-        console.error('[WS] handleDisconnect error:', err);
-      }
 
-      this.playerSockets.delete(playerId);
-      this.socketToPlayer.delete(client.id);
+        await this.gameService.abandonGame(game.id, playerId);
+      }
+    } catch (err) {
+      console.error('[WS] handleDisconnect error:', err);
     }
   }
 
@@ -67,16 +81,24 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
   ) {
     const { playerId } = data;
+    console.log(`[WS] register: player=${playerId} socket=${client.id}`);
 
-    // Update maps (re-registration replaces stale socket)
+    // If the player had a different socket before, remove the stale mapping
+    // so that old-socket disconnects don't accidentally clean up the new one.
+    const oldSocket = this.playerSockets.get(playerId);
+    if (oldSocket && oldSocket.id !== client.id) {
+      console.log(`[WS] Removing stale socket mapping ${oldSocket.id} for ${playerId}`);
+      this.socketToPlayer.delete(oldSocket.id);
+    }
+
     this.playerSockets.set(playerId, client);
     this.socketToPlayer.set(client.id, playerId);
     client.emit('registered', { playerId });
 
-    // Resume any active game for this player
+    // Resume any active game for this player (reconnection support)
     const game = await this.gameService.findActiveGameByPlayer(playerId);
     if (game) {
-      console.log(`[WS] Resuming game ${game.id} for player ${playerId}`);
+      console.log(`[WS] Resuming game ${game.id} for ${playerId}`);
       client.join(game.id);
       client.emit('gameStarted', {
         gameId: game.id,
@@ -85,7 +107,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
         fen: game.fen,
         currentTurn: game.currentTurn,
       });
-      // Tell player it's their turn if so
       if (game.currentTurn === playerId) {
         client.emit('yourTurn', { gameId: game.id });
       }
@@ -144,7 +165,6 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    // Broadcast new board state to everyone in the room
     this.server.to(data.gameId).emit('moveMade', {
       playerId: data.playerId,
       move: data.move,
@@ -153,14 +173,12 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     });
 
     if (result.isGameOver) {
-      // Notify both players of the result — no yourTurn after game ends
       this.server.to(data.gameId).emit('gameOver', {
         winner: result.winner,
         endReason: result.endReason,
         message: this.getGameOverMessage(result.winner, result.endReason),
       });
     } else {
-      // Tell the next player it is their turn
       const updatedGame = await this.gameService.getGame(data.gameId);
       if (updatedGame) {
         const nextSocket = this.playerSockets.get(updatedGame.currentTurn);
@@ -173,13 +191,15 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   // ── Called by WaitingRoomService ───────────────────────────────────────────
 
-  sendInvitation(inviterId: string, invitedId: string) {
+  sendInvitation(inviterId: string, invitedId: string): boolean {
     const socket = this.playerSockets.get(invitedId);
     if (socket) {
       socket.emit('inviteReceived', { inviterId, invitedId });
-    } else {
-      console.warn(`[WS] sendInvitation: socket not found for ${invitedId}`);
+      console.log(`[WS] Invitation sent from ${inviterId} to ${invitedId}`);
+      return true;
     }
+    console.warn(`[WS] sendInvitation: no active socket for invited player ${invitedId}`);
+    return false;
   }
 
   notifyInviteDeclined(inviterId: string, invitedId: string) {
@@ -201,51 +221,35 @@ export class GameGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (whiteSocket) {
       whiteSocket.join(gameId);
       whiteSocket.emit('gameStarted', {
-        gameId,
-        whitePlayerId,
-        blackPlayerId,
-        fen,
-        currentTurn: whitePlayerId, // White always starts
+        gameId, whitePlayerId, blackPlayerId, fen,
+        currentTurn: whitePlayerId,
       });
       whiteSocket.emit('yourTurn', { gameId });
     } else {
-      console.warn(`[WS] notifyGameStart: white socket not found (${whitePlayerId})`);
+      console.warn(`[WS] notifyGameStart: white socket missing (${whitePlayerId})`);
     }
 
     if (blackSocket) {
       blackSocket.join(gameId);
       blackSocket.emit('gameStarted', {
-        gameId,
-        whitePlayerId,
-        blackPlayerId,
-        fen,
-        currentTurn: whitePlayerId, // White always starts
+        gameId, whitePlayerId, blackPlayerId, fen,
+        currentTurn: whitePlayerId,
       });
-      // Black does NOT get yourTurn — it is white's turn
     } else {
-      console.warn(`[WS] notifyGameStart: black socket not found (${blackPlayerId})`);
+      console.warn(`[WS] notifyGameStart: black socket missing (${blackPlayerId})`);
     }
   }
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
-  private getGameOverMessage(
-    winner: string | undefined,
-    endReason: string | undefined,
-  ): string {
+  private getGameOverMessage(winner?: string, endReason?: string): string {
     switch (endReason) {
-      case 'checkmate':
-        return `Checkmate! ${winner} wins!`;
-      case 'stalemate':
-        return 'Draw by stalemate.';
-      case 'draw':
-        return 'The game ended in a draw.';
-      case 'threefold_repetition':
-        return 'Draw by threefold repetition.';
-      case 'insufficient_material':
-        return 'Draw by insufficient material.';
-      default:
-        return 'Game over.';
+      case 'checkmate':           return `Checkmate! ${winner} wins!`;
+      case 'stalemate':           return 'Draw by stalemate.';
+      case 'draw':                return 'The game ended in a draw.';
+      case 'threefold_repetition':return 'Draw by threefold repetition.';
+      case 'insufficient_material': return 'Draw by insufficient material.';
+      default:                    return 'Game over.';
     }
   }
 }

@@ -126,18 +126,30 @@ class GameStateNotifier extends StateNotifier<GameState> {
     final pgn = data['pgn'] as String?;
     final playerId = data['playerId'] as String?;
 
+    // Extract from/to for last-move highlight
+    final moveMap = data['move'];
+    final lastFrom = moveMap is Map ? moveMap['from'] as String? : null;
+    final lastTo = moveMap is Map ? moveMap['to'] as String? : null;
+
     if (fen == null) return;
 
     if (playerId == _playerId) {
-      // Our move was confirmed — clear turn indicator; server will send yourTurn to opponent
+      // Our move was confirmed — clear turn; server sends yourTurn to opponent
       state = state.copyWith(
         fen: fen,
         pgn: pgn ?? state.pgn,
         currentTurn: null,
+        lastMoveFrom: lastFrom,
+        lastMoveTo: lastTo,
       );
     } else {
-      // Opponent made a move — update board; we'll get yourTurn if it's now our go
-      state = state.copyWith(fen: fen, pgn: pgn ?? state.pgn);
+      // Opponent's move — update board; we'll get yourTurn if it's our go
+      state = state.copyWith(
+        fen: fen,
+        pgn: pgn ?? state.pgn,
+        lastMoveFrom: lastFrom,
+        lastMoveTo: lastTo,
+      );
     }
   }
 

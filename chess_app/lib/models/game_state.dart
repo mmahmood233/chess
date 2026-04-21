@@ -2,16 +2,9 @@ class _Undefined {
   const _Undefined();
 }
 
-enum GameStatus {
-  waiting,
-  inProgress,
-  completed,
-}
+enum GameStatus { waiting, inProgress, completed }
 
-enum PlayerColor {
-  white,
-  black,
-}
+enum PlayerColor { white, black }
 
 class GameState {
   final String? gameId;
@@ -24,6 +17,8 @@ class GameState {
   final String? winner;
   final String? endReason;
   final PlayerColor? myColor;
+  final String? lastMoveFrom;
+  final String? lastMoveTo;
 
   GameState({
     this.gameId,
@@ -36,6 +31,8 @@ class GameState {
     this.winner,
     this.endReason,
     this.myColor,
+    this.lastMoveFrom,
+    this.lastMoveTo,
   });
 
   GameState copyWith({
@@ -49,22 +46,31 @@ class GameState {
     String? winner,
     String? endReason,
     PlayerColor? myColor,
+    Object? lastMoveFrom = const _Undefined(),
+    Object? lastMoveTo = const _Undefined(),
   }) {
     return GameState(
       gameId: gameId ?? this.gameId,
       whitePlayerId: whitePlayerId ?? this.whitePlayerId,
       blackPlayerId: blackPlayerId ?? this.blackPlayerId,
-      currentTurn: currentTurn is _Undefined ? this.currentTurn : currentTurn as String?,
+      currentTurn:
+          currentTurn is _Undefined ? this.currentTurn : currentTurn as String?,
       fen: fen ?? this.fen,
       pgn: pgn ?? this.pgn,
       status: status ?? this.status,
       winner: winner ?? this.winner,
       endReason: endReason ?? this.endReason,
       myColor: myColor ?? this.myColor,
+      lastMoveFrom: lastMoveFrom is _Undefined
+          ? this.lastMoveFrom
+          : lastMoveFrom as String?,
+      lastMoveTo:
+          lastMoveTo is _Undefined ? this.lastMoveTo : lastMoveTo as String?,
     );
   }
 
-  bool get isMyTurn => currentTurn != null && currentTurn == _getMyPlayerId();
+  bool get isMyTurn =>
+      currentTurn != null && currentTurn == _getMyPlayerId();
 
   String? _getMyPlayerId() {
     if (myColor == PlayerColor.white) return whitePlayerId;

@@ -6,7 +6,8 @@
       "Bash(curl -s http://localhost:3000/waiting-room/players)",
       "Bash(lsof -ti:3000)",
       "Bash(xargs kill *)",
-      "Bash(flutter build *)"
+      "Bash(flutter build *)",
+      "Bash(curl -s http://localhost:3000)"
     ]
   }
 }

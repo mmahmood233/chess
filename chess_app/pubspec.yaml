@@ -39,6 +39,7 @@ dependencies:
   chess: ^0.7.0
   uuid: ^4.0.0
   shared_preferences: ^2.2.0
+  chess_vectors_flutter: ^1.1.0
 
 dev_dependencies:
   flutter_test:

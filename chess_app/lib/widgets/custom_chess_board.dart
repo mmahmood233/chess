@@ -1,21 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:chess/chess.dart' as chess_lib;
+import 'package:chess_vectors_flutter/chess_vectors_flutter.dart';
 
-// ── Classic board colours (lichess palette) ─────────────────────────────────
-const _lightSquare = Color(0xFFF0D9B5);
-const _darkSquare = Color(0xFFB58863);
-const _selectedLight = Color(0xFFF6F669);
-const _selectedDark = Color(0xFFBBCA2A);
-const _checkLight = Color(0xFFFF6B6B);
-const _checkDark = Color(0xFFCC4444);
-const _lastMoveLight = Color(0xFFCDD26A);
-const _lastMoveDark = Color(0xFFAAA23A);
+// ── Board palette (Chess.com classic) ────────────────────────────────────────
+const _lightSq = Color(0xFFF0D9B5);
+const _darkSq  = Color(0xFFB58863);
+
+// Highlights — applied as a semi-transparent overlay so the base square colour
+// still shows through, preventing the "solid block" look.
+const _selectedOverlay  = Color(0xBBF6F669); // yellow
+const _lastMoveOverlay  = Color(0x88CDD26A); // muted olive-yellow
+const _checkOverlay     = Color(0xDDFF4444); // red for checked king
 
 class CustomChessBoard extends StatelessWidget {
   final String fen;
   final Function(String from, String to, {String? promotion})? onMove;
   final bool isWhite;
   final bool isMyTurn;
+  final String? lastMoveFrom;
+  final String? lastMoveTo;
 
   const CustomChessBoard({
     super.key,
@@ -23,6 +26,8 @@ class CustomChessBoard extends StatelessWidget {
     this.onMove,
     required this.isWhite,
     required this.isMyTurn,
+    this.lastMoveFrom,
+    this.lastMoveTo,
   });
 
   @override
@@ -32,6 +37,8 @@ class CustomChessBoard extends StatelessWidget {
       onMove: onMove,
       isWhite: isWhite,
       isMyTurn: isMyTurn,
+      lastMoveFrom: lastMoveFrom,
+      lastMoveTo: lastMoveTo,
     );
   }
 }
@@ -41,12 +48,16 @@ class _ChessBoardWidget extends StatefulWidget {
   final Function(String from, String to, {String? promotion})? onMove;
   final bool isWhite;
   final bool isMyTurn;
+  final String? lastMoveFrom;
+  final String? lastMoveTo;
 
   const _ChessBoardWidget({
     required this.fen,
     this.onMove,
     required this.isWhite,
     required this.isMyTurn,
+    this.lastMoveFrom,
+    this.lastMoveTo,
   });
 
   @override
@@ -54,10 +65,8 @@ class _ChessBoardWidget extends StatefulWidget {
 }
 
 class _ChessBoardWidgetState extends State<_ChessBoardWidget> {
-  String? _selectedSquare;       // algebraic of selected piece
-  Set<String> _legalTargets = {}; // algebraic destinations for selected piece
-  String? _lastMoveFrom;
-  String? _lastMoveTo;
+  String? _selectedSquare;
+  Set<String> _legalTargets = {};
   late chess_lib.Chess _chess;
 
   @override
@@ -76,7 +85,6 @@ class _ChessBoardWidgetState extends State<_ChessBoardWidget> {
         _legalTargets = {};
       });
     }
-    // If it stops being our turn, deselect
     if (old.isMyTurn && !widget.isMyTurn) {
       setState(() {
         _selectedSquare = null;
@@ -85,29 +93,25 @@ class _ChessBoardWidgetState extends State<_ChessBoardWidget> {
     }
   }
 
-  // ── Chess helpers ────────────────────────────────────────────────────────────
+  // ── Helpers ─────────────────────────────────────────────────────────────────
 
-  String? _findCheckedKingSquare() {
+  String? _checkedKingSquare() {
     if (!_chess.in_check) return null;
-    final kingColor = _chess.turn;
-    for (var file = 0; file < 8; file++) {
-      for (var rank = 0; rank < 8; rank++) {
-        final sq = '${String.fromCharCode(97 + file)}${rank + 1}';
-        final piece = _chess.get(sq);
-        if (piece != null &&
-            piece.type.name == 'k' &&
-            piece.color == kingColor) {
-          return sq;
-        }
+    final color = _chess.turn;
+    for (var f = 0; f < 8; f++) {
+      for (var r = 0; r < 8; r++) {
+        final sq = '${String.fromCharCode(97 + f)}${r + 1}';
+        final p = _chess.get(sq);
+        if (p != null && p.type.name == 'k' && p.color == color) return sq;
       }
     }
     return null;
   }
 
-  Set<String> _legalMovesFrom(String square) {
+  Set<String> _legalTargetsFor(String square) {
     try {
-      final rawMoves = _chess.moves({'square': square, 'verbose': true});
-      return rawMoves
+      return _chess
+          .moves({'square': square, 'verbose': true})
           .map<String>((m) => (m as Map)['to'] as String)
           .toSet();
     } catch (_) {
@@ -115,254 +119,209 @@ class _ChessBoardWidgetState extends State<_ChessBoardWidget> {
     }
   }
 
-  bool _isPieceOurs(chess_lib.Piece piece) {
-    return (widget.isWhite && piece.color == chess_lib.Color.WHITE) ||
-        (!widget.isWhite && piece.color == chess_lib.Color.BLACK);
-  }
+  bool _isOurs(chess_lib.Piece p) =>
+      (widget.isWhite && p.color == chess_lib.Color.WHITE) ||
+      (!widget.isWhite && p.color == chess_lib.Color.BLACK);
 
-  // ── Tap handler ─────────────────────────────────────────────────────────────
+  // ── Tap ─────────────────────────────────────────────────────────────────────
 
-  void _onTap(String algebraic) {
+  void _onTap(String sq) {
     if (!widget.isMyTurn) return;
-
-    final piece = _chess.get(algebraic);
+    final piece = _chess.get(sq);
 
     if (_selectedSquare == null) {
-      // Nothing selected — try to select our piece
-      if (piece != null && _isPieceOurs(piece)) {
+      if (piece != null && _isOurs(piece)) {
         setState(() {
-          _selectedSquare = algebraic;
-          _legalTargets = _legalMovesFrom(algebraic);
+          _selectedSquare = sq;
+          _legalTargets = _legalTargetsFor(sq);
         });
       }
       return;
     }
 
-    // Something already selected
-    if (_selectedSquare == algebraic) {
-      // Tap same square → deselect
+    if (_selectedSquare == sq) {
+      setState(() { _selectedSquare = null; _legalTargets = {}; });
+      return;
+    }
+
+    if (piece != null && _isOurs(piece)) {
       setState(() {
-        _selectedSquare = null;
-        _legalTargets = {};
+        _selectedSquare = sq;
+        _legalTargets = _legalTargetsFor(sq);
       });
       return;
     }
 
-    if (piece != null && _isPieceOurs(piece)) {
-      // Tap another of our own pieces → change selection
-      setState(() {
-        _selectedSquare = algebraic;
-        _legalTargets = _legalMovesFrom(algebraic);
-      });
-      return;
-    }
-
-    // Attempt a move (even if it's illegal — server will reject it)
+    // Attempt move
     final from = _selectedSquare!;
-    final to = algebraic;
-
     String? promotion;
-    final movingPiece = _chess.get(from);
-    if (movingPiece != null && movingPiece.type.name == 'p') {
-      final toRank = int.parse(to[1]);
-      if ((movingPiece.color == chess_lib.Color.WHITE && toRank == 8) ||
-          (movingPiece.color == chess_lib.Color.BLACK && toRank == 1)) {
-        promotion = 'q'; // Auto-promote to queen
+    final moving = _chess.get(from);
+    if (moving != null && moving.type.name == 'p') {
+      final toRank = int.parse(sq[1]);
+      if ((moving.color == chess_lib.Color.WHITE && toRank == 8) ||
+          (moving.color == chess_lib.Color.BLACK && toRank == 1)) {
+        promotion = 'q';
       }
     }
 
-    setState(() {
-      _selectedSquare = null;
-      _legalTargets = {};
-      _lastMoveFrom = from;
-      _lastMoveTo = to;
-    });
-
-    widget.onMove?.call(from, to, promotion: promotion);
+    setState(() { _selectedSquare = null; _legalTargets = {}; });
+    widget.onMove?.call(from, sq, promotion: promotion);
   }
 
   // ── Square builder ───────────────────────────────────────────────────────────
 
-  Widget _buildSquare(int file, int rank) {
-    final sq = '${String.fromCharCode(97 + file)}${rank + 1}';
-    final isLight = (file + rank) % 2 == 0;
-    final piece = _chess.get(sq);
-    final isSelected = _selectedSquare == sq;
-    final isLegal = _legalTargets.contains(sq);
-    final isLastMove = sq == _lastMoveFrom || sq == _lastMoveTo;
-    final checkedKing = _findCheckedKingSquare();
-    final isCheckedKing = sq == checkedKing;
+  Widget _buildSquare(
+    int file,
+    int rank,
+    String sq,
+    double sqSize,
+    String? checkedKing,
+  ) {
+    final isLight   = (file + rank) % 2 == 0;
+    final piece     = _chess.get(sq);
+    final selected  = _selectedSquare == sq;
+    final legal     = _legalTargets.contains(sq);
+    final lastMove  = sq == widget.lastMoveFrom || sq == widget.lastMoveTo;
+    final inCheck   = sq == checkedKing;
 
-    // ── Background colour ─────────────────────────────────────────────────────
-    Color bg;
-    if (isCheckedKing) {
-      bg = isLight ? _checkLight : _checkDark;
-    } else if (isSelected) {
-      bg = isLight ? _selectedLight : _selectedDark;
-    } else if (isLastMove) {
-      bg = isLight ? _lastMoveLight : _lastMoveDark;
-    } else {
-      bg = isLight ? _lightSquare : _darkSquare;
-    }
+    // Coordinates: embedded Chess.com style
+    // Rank numbers on the left-most display column; file letters on the bottom row.
+    final isLeftCol   = widget.isWhite ? file == 0 : file == 7;
+    final isBottomRow = widget.isWhite ? rank == 0 : rank == 7;
+    final coordColor  = isLight ? _darkSq : _lightSq;
+    final coordSize   = sqSize * 0.22;
 
     return GestureDetector(
       onTap: () => _onTap(sq),
-      child: Container(
-        color: bg,
+      child: SizedBox(
+        width: sqSize,
+        height: sqSize,
         child: Stack(
-          fit: StackFit.expand,
           children: [
-            // Legal move indicator
-            if (isLegal)
-              piece == null
-                  ? _buildDot()
-                  : _buildCaptureRing(),
-            // Piece
+            // ── Base square colour ──────────────────────────────────────────
+            Positioned.fill(
+              child: ColoredBox(color: isLight ? _lightSq : _darkSq),
+            ),
+
+            // ── Last-move highlight (overlay) ───────────────────────────────
+            if (lastMove && !selected && !inCheck)
+              Positioned.fill(child: ColoredBox(color: _lastMoveOverlay)),
+
+            // ── Selected highlight (overlay) ────────────────────────────────
+            if (selected)
+              Positioned.fill(child: ColoredBox(color: _selectedOverlay)),
+
+            // ── Check highlight (overlay) ────────────────────────────────────
+            if (inCheck)
+              Positioned.fill(child: ColoredBox(color: _checkOverlay)),
+
+            // ── Legal move: dot (empty) ─────────────────────────────────────
+            if (legal && piece == null)
+              Center(
+                child: Container(
+                  width:  sqSize * 0.30,
+                  height: sqSize * 0.30,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.black.withOpacity(0.20),
+                  ),
+                ),
+              ),
+
+            // ── Legal move: ring (capture) ──────────────────────────────────
+            if (legal && piece != null)
+              Positioned.fill(
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: Colors.black.withOpacity(0.28),
+                      width: sqSize * 0.095,
+                    ),
+                    borderRadius: BorderRadius.circular(sqSize * 0.04),
+                  ),
+                ),
+              ),
+
+            // ── Piece ───────────────────────────────────────────────────────
             if (piece != null)
-              Center(child: _buildPiece(piece)),
+              Center(child: _buildPieceWidget(piece, sqSize * 0.88)),
+
+            // ── Rank coordinate (left edge) ──────────────────────────────────
+            if (isLeftCol)
+              Positioned(
+                top: 2,
+                left: 3,
+                child: Text(
+                  '${rank + 1}',
+                  style: TextStyle(
+                    fontSize: coordSize,
+                    fontWeight: FontWeight.bold,
+                    color: coordColor,
+                    height: 1,
+                  ),
+                ),
+              ),
+
+            // ── File coordinate (bottom edge) ────────────────────────────────
+            if (isBottomRow)
+              Positioned(
+                bottom: 2,
+                right: 3,
+                child: Text(
+                  String.fromCharCode(97 + file),
+                  style: TextStyle(
+                    fontSize: coordSize,
+                    fontWeight: FontWeight.bold,
+                    color: coordColor,
+                    height: 1,
+                  ),
+                ),
+              ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildDot() {
-    return Center(
-      child: FractionallySizedBox(
-        widthFactor: 0.32,
-        heightFactor: 0.32,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: Colors.black.withOpacity(0.18),
-          ),
-        ),
-      ),
-    );
+  // ── Vector piece builder ─────────────────────────────────────────────────────
+
+  Widget _buildPieceWidget(chess_lib.Piece piece, double size) {
+    final w = piece.color == chess_lib.Color.WHITE;
+    switch (piece.type.name) {
+      case 'k': return w ? WhiteKing(size: size)   : BlackKing(size: size);
+      case 'q': return w ? WhiteQueen(size: size)  : BlackQueen(size: size);
+      case 'r': return w ? WhiteRook(size: size)   : BlackRook(size: size);
+      case 'b': return w ? WhiteBishop(size: size) : BlackBishop(size: size);
+      case 'n': return w ? WhiteKnight(size: size) : BlackKnight(size: size);
+      case 'p': return w ? WhitePawn(size: size)   : BlackPawn(size: size);
+      default:  return const SizedBox.shrink();
+    }
   }
 
-  Widget _buildCaptureRing() {
-    return Positioned.fill(
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: Colors.black.withOpacity(0.25),
-            width: 5,
-          ),
-          borderRadius: BorderRadius.circular(3),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildPiece(chess_lib.Piece piece) {
-    final symbol = _pieceSymbol(piece);
-    final isWhitePiece = piece.color == chess_lib.Color.WHITE;
-    return Text(
-      symbol,
-      style: TextStyle(
-        fontSize: 38,
-        color: isWhitePiece ? Colors.white : const Color(0xFF1A1A1A),
-        shadows: isWhitePiece
-            ? const [
-                Shadow(offset: Offset(-1.2, -1.2), color: Colors.black87, blurRadius: 0),
-                Shadow(offset: Offset(1.2, -1.2), color: Colors.black87, blurRadius: 0),
-                Shadow(offset: Offset(-1.2, 1.2), color: Colors.black87, blurRadius: 0),
-                Shadow(offset: Offset(1.2, 1.2), color: Colors.black87, blurRadius: 0),
-              ]
-            : null,
-      ),
-    );
-  }
-
-  String _pieceSymbol(chess_lib.Piece piece) {
-    const white = {'p': '♙', 'n': '♘', 'b': '♗', 'r': '♖', 'q': '♕', 'k': '♔'};
-    const black = {'p': '♟', 'n': '♞', 'b': '♝', 'r': '♜', 'q': '♛', 'k': '♚'};
-    final map = piece.color == chess_lib.Color.WHITE ? white : black;
-    return map[piece.type.name] ?? '';
-  }
-
-  // ── Main build ───────────────────────────────────────────────────────────────
+  // ── Build ────────────────────────────────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
-    // Rank labels: white sees 8→1 top-to-bottom; black sees 1→8
-    // File labels: white sees a→h left-to-right; black sees h→a
-    return Column(
-      children: [
-        Expanded(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Rank labels (left column)
-              Column(
-                children: List.generate(8, (i) {
-                  final rank = widget.isWhite ? 8 - i : i + 1;
-                  return Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.only(right: 4),
-                      child: Align(
-                        alignment: Alignment.centerRight,
-                        child: Text(
-                          '$rank',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
+    return AspectRatio(
+      aspectRatio: 1.0,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final sqSize = constraints.maxWidth / 8;
+          final king = _checkedKingSquare();
+          return Column(
+            children: List.generate(8, (rowIdx) {
+              final rank = widget.isWhite ? 7 - rowIdx : rowIdx;
+              return Row(
+                children: List.generate(8, (colIdx) {
+                  final file = widget.isWhite ? colIdx : 7 - colIdx;
+                  final sq = '${String.fromCharCode(97 + file)}${rank + 1}';
+                  return _buildSquare(file, rank, sq, sqSize, king);
                 }),
-              ),
-              // Board
-              Expanded(
-                child: AspectRatio(
-                  aspectRatio: 1.0,
-                  child: Column(
-                    children: List.generate(8, (rowIdx) {
-                      // rowIdx 0 = top of display
-                      final rank = widget.isWhite ? 7 - rowIdx : rowIdx;
-                      return Expanded(
-                        child: Row(
-                          children: List.generate(8, (colIdx) {
-                            final file = widget.isWhite ? colIdx : 7 - colIdx;
-                            return Expanded(child: _buildSquare(file, rank));
-                          }),
-                        ),
-                      );
-                    }),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        // File labels (bottom row)
-        Row(
-          children: [
-            const SizedBox(width: 20), // aligns with rank label column
-            ...List.generate(8, (i) {
-              final file = widget.isWhite
-                  ? String.fromCharCode(97 + i)
-                  : String.fromCharCode(104 - i);
-              return Expanded(
-                child: Center(
-                  child: Text(
-                    file,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade600,
-                    ),
-                  ),
-                ),
               );
             }),
-          ],
-        ),
-      ],
+          );
+        },
+      ),
     );
   }
 }

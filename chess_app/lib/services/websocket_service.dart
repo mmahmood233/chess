@@ -6,6 +6,7 @@ class WebSocketService {
   IO.Socket? _socket;
   final _messageController = StreamController<Map<String, dynamic>>.broadcast();
   Completer<void> _connected = Completer<void>();
+  bool _hasEverConnected = false;
 
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
 
@@ -34,7 +35,13 @@ class WebSocketService {
         if (!_connected.isCompleted) {
           _connected.complete();
         }
-        _messageController.add({'event': 'connected', 'data': <String, dynamic>{}});
+        if (_hasEverConnected) {
+          // This is a reconnect — re-registration is needed
+          _messageController.add({'event': 'reconnected', 'data': <String, dynamic>{}});
+        } else {
+          _hasEverConnected = true;
+          _messageController.add({'event': 'connected', 'data': <String, dynamic>{}});
+        }
       });
 
       _socket!.onDisconnect((_) {
@@ -43,13 +50,6 @@ class WebSocketService {
           _connected = Completer<void>();
         }
         _messageController.add({'event': 'disconnected', 'data': <String, dynamic>{}});
-      });
-
-      _socket!.onReconnect((_) {
-        if (!_connected.isCompleted) {
-          _connected.complete();
-        }
-        _messageController.add({'event': 'reconnected', 'data': <String, dynamic>{}});
       });
 
       _socket!.onError((error) {
