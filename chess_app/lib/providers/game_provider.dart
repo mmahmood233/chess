@@ -1,3 +1,16 @@
+// game_provider.dart — Riverpod state management for the chess game.
+//
+// Providers defined here:
+//   [playerIdProvider]     — The local player's UUID (overridden in main.dart).
+//   [apiServiceProvider]   — Singleton [ApiService] instance.
+//   [websocketServiceProvider] — Singleton [WebSocketService] instance.
+//   [gameStateProvider]    — [GameStateNotifier] + [GameState].
+//
+// [GameStateNotifier] is the heart of the app's logic layer:
+//   • Connects the WebSocket on construction and registers the player.
+//   • Translates every incoming socket event into a state update.
+//   • Handles navigation (game start) via the global [navigatorKey].
+//   • Exposes public actions: joinWaitingRoom, invitePlayer, makeMove, etc.
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/game_state.dart';
@@ -6,24 +19,35 @@ import '../services/websocket_service.dart';
 import '../main.dart';
 import '../screens/game_board_screen.dart';
 
-/// Overridden in main() with a persistent UUID from SharedPreferences.
-final playerIdProvider = Provider<String>((ref) => throw UnimplementedError('playerIdProvider must be overridden in main()'));
+/// The local player's UUID.  Overridden in main() with the value from
+/// SharedPreferences so the same ID is used across app restarts.
+final playerIdProvider = Provider<String>(
+  (ref) => throw UnimplementedError('playerIdProvider must be overridden in main()'),
+);
 
+/// HTTP client — one instance shared across the app.
 final apiServiceProvider = Provider<ApiService>((ref) => ApiService());
 
+/// WebSocket client — one instance shared across the app.
+/// Disposed automatically when the provider is removed from the tree.
 final websocketServiceProvider = Provider<WebSocketService>((ref) {
   final service = WebSocketService();
   ref.onDispose(() => service.dispose());
   return service;
 });
 
-final gameStateProvider = StateNotifierProvider<GameStateNotifier, GameState>(
+/// Main state provider.  Exposes [GameState] and the [GameStateNotifier]
+/// that drives all game-related actions.
+final gameStateProvider =
+    StateNotifierProvider<GameStateNotifier, GameState>(
   (ref) => GameStateNotifier(
     ref.watch(websocketServiceProvider),
     ref.watch(apiServiceProvider),
     ref.watch(playerIdProvider),
   ),
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 class GameStateNotifier extends StateNotifier<GameState> {
   final WebSocketService _wsService;
@@ -35,6 +59,8 @@ class GameStateNotifier extends StateNotifier<GameState> {
     _initWebSocket();
   }
 
+  /// Connects the socket, subscribes to the message stream, then waits for the
+  /// connection to be ready before registering the player with the server.
   void _initWebSocket() async {
     _wsService.connect();
     _wsService.messages.listen(_handleWebSocketMessage);
@@ -42,19 +68,20 @@ class GameStateNotifier extends StateNotifier<GameState> {
       await _wsService.waitForConnection();
       _wsService.register(_playerId);
     } catch (_) {
-      // Will retry on reconnect event
+      // Registration will be retried when the 'reconnected' event fires
     }
   }
 
+  /// Dispatches every incoming WebSocket event to the appropriate handler.
   void _handleWebSocketMessage(Map<String, dynamic> message) {
     final event = message['event'] as String?;
-    final data = message['data'] as Map<String, dynamic>?;
+    final data  = message['data']  as Map<String, dynamic>?;
 
     if (event == null) return;
 
     switch (event) {
       case 'reconnected':
-        // Re-register after reconnect so server knows our socket again
+        // Socket reconnected — re-register so the server maps the new socketId
         _wsService.register(_playerId);
         break;
       case 'gameStarted':
@@ -84,19 +111,24 @@ class GameStateNotifier extends StateNotifier<GameState> {
     }
   }
 
+  // ── WebSocket event handlers ───────────────────────────────────────────────
+
+  /// Handles both new game starts and reconnection resumes.
+  /// Updates state with the server-provided FEN and current turn, then
+  /// navigates to the game board (the single navigation source in the app).
   void _handleGameStarted(Map<String, dynamic> data) {
-    final gameId = data['gameId'] as String;
+    final gameId       = data['gameId']       as String;
     final whitePlayerId = data['whitePlayerId'] as String;
     final blackPlayerId = data['blackPlayerId'] as String;
-    // Server sends current FEN (especially important for reconnections)
+    // Server sends the current FEN — critical for reconnection mid-game
     final fen = data['fen'] as String? ??
         'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-    // Server sends who has the current turn (important for reconnections)
-    final serverCurrentTurn = data['currentTurn'] as String? ?? whitePlayerId;
+    // Server sends whose turn it is — critical for reconnection
+    final serverCurrentTurn =
+        data['currentTurn'] as String? ?? whitePlayerId;
 
-    final myColor = whitePlayerId == _playerId
-        ? PlayerColor.white
-        : PlayerColor.black;
+    final myColor =
+        whitePlayerId == _playerId ? PlayerColor.white : PlayerColor.black;
 
     state = state.copyWith(
       gameId: gameId,
@@ -108,12 +140,12 @@ class GameStateNotifier extends StateNotifier<GameState> {
       fen: fen,
     );
 
+    // Join the Socket.io room so move broadcasts reach this socket
     _wsService.joinGame(gameId, _playerId);
 
-    // Navigate to game board from any screen
+    // Navigate from whatever screen is showing to the game board
     final context = navigatorKey.currentContext;
     if (context != null) {
-      // Pop everything back to root (main menu), then push game board
       Navigator.of(context).popUntil((route) => route.isFirst);
       Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => const GameBoardScreen()),
@@ -121,20 +153,21 @@ class GameStateNotifier extends StateNotifier<GameState> {
     }
   }
 
+  /// A move has been confirmed by the server — update FEN and last-move squares.
   void _handleMoveMade(Map<String, dynamic> data) {
-    final fen = data['fen'] as String?;
-    final pgn = data['pgn'] as String?;
+    final fen      = data['fen']      as String?;
+    final pgn      = data['pgn']      as String?;
     final playerId = data['playerId'] as String?;
 
-    // Extract from/to for last-move highlight
+    // Extract from/to squares for the last-move highlight on the board
     final moveMap = data['move'];
     final lastFrom = moveMap is Map ? moveMap['from'] as String? : null;
-    final lastTo = moveMap is Map ? moveMap['to'] as String? : null;
+    final lastTo   = moveMap is Map ? moveMap['to']   as String? : null;
 
     if (fen == null) return;
 
     if (playerId == _playerId) {
-      // Our move was confirmed — clear turn; server sends yourTurn to opponent
+      // Our own move was confirmed — clear the turn flag
       state = state.copyWith(
         fen: fen,
         pgn: pgn ?? state.pgn,
@@ -143,7 +176,7 @@ class GameStateNotifier extends StateNotifier<GameState> {
         lastMoveTo: lastTo,
       );
     } else {
-      // Opponent's move — update board; we'll get yourTurn if it's our go
+      // Opponent's move — update the board; 'yourTurn' will follow if applicable
       state = state.copyWith(
         fen: fen,
         pgn: pgn ?? state.pgn,
@@ -153,20 +186,24 @@ class GameStateNotifier extends StateNotifier<GameState> {
     }
   }
 
+  /// Server signals that it is this player's turn — set currentTurn so
+  /// [GameState.isMyTurn] becomes true and the board accepts input.
   void _handleYourTurn(Map<String, dynamic> data) {
-    // Server tells us it's our turn — set currentTurn to our ID so isMyTurn becomes true
     state = state.copyWith(currentTurn: _playerId);
   }
 
+  /// Game has reached a terminal state — update status, winner, and reason.
+  /// The [GameBoardScreen] listens for this transition and shows the dialog.
   void _handleGameOver(Map<String, dynamic> data) {
     state = state.copyWith(
       status: GameStatus.completed,
-      winner: data['winner'] as String?,
+      winner: data['winner']    as String?,
       endReason: data['endReason'] as String?,
       currentTurn: null,
     );
   }
 
+  /// Server rejected a move — show an error snackbar.
   void _handleMoveError(Map<String, dynamic> data) {
     final error = data['error'] as String? ?? 'Illegal move';
     final context = navigatorKey.currentContext;
@@ -182,6 +219,7 @@ class GameStateNotifier extends StateNotifier<GameState> {
     }
   }
 
+  /// Show the incoming invitation dialog so the player can accept or decline.
   void _handleInviteReceived(Map<String, dynamic> data) {
     final inviterId = data['inviterId'] as String;
     final context = navigatorKey.currentContext;
@@ -190,49 +228,135 @@ class GameStateNotifier extends StateNotifier<GameState> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Game Invitation'),
-        content: const Text('A player wants to challenge you to a game. Accept?'),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await _apiService.declineInvite(inviterId, _playerId);
-            },
-            child: const Text('Decline'),
+      barrierColor: Colors.black87,
+      builder: (ctx) => Dialog(
+        backgroundColor: const Color(0xFF272522),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.sports_esports,
+                  color: Color(0xFF769656), size: 44),
+              const SizedBox(height: 16),
+              const Text(
+                'Game Invitation',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'A player wants to challenge you to a game!',
+                style: TextStyle(color: Colors.white60, fontSize: 14),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: Colors.white70,
+                        side: const BorderSide(color: Colors.white24),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        await _apiService.declineInvite(inviterId, _playerId);
+                      },
+                      child: const Text('Decline'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF769656),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                      onPressed: () async {
+                        Navigator.pop(ctx);
+                        await _apiService.acceptInvite(inviterId, _playerId);
+                        // 'gameStarted' WebSocket event will trigger navigation
+                      },
+                      child: const Text('Accept'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await _apiService.acceptInvite(inviterId, _playerId);
-              // gameStarted WS event will handle navigation
-            },
-            child: const Text('Accept'),
-          ),
-        ],
+        ),
       ),
     );
   }
 
+  /// Show a dialog informing the inviter that their invitation was declined.
   void _handleInviteDeclined(Map<String, dynamic> data) {
     final context = navigatorKey.currentContext;
     if (context == null) return;
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Invitation Declined'),
-        content: const Text('Your invitation was declined.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK'),
+      barrierColor: Colors.black87,
+      builder: (ctx) => Dialog(
+        backgroundColor: const Color(0xFF272522),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.cancel_outlined,
+                  color: Colors.redAccent, size: 44),
+              const SizedBox(height: 16),
+              const Text(
+                'Invitation Declined',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Your opponent declined the challenge.',
+                style: TextStyle(color: Colors.white60, fontSize: 14),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF769656),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('OK'),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 
+  /// Opponent disconnected or resigned — this player wins.
+  /// [GameBoardScreen] listens for the completed status and shows the dialog.
   void _handleOpponentLeft(Map<String, dynamic> data) {
     state = state.copyWith(
       status: GameStatus.completed,
@@ -240,11 +364,13 @@ class GameStateNotifier extends StateNotifier<GameState> {
       winner: _playerId,
       currentTurn: null,
     );
-    // The GameBoardScreen's ref.listen picks this up and shows the dialog
   }
 
   // ── Public actions ──────────────────────────────────────────────────────────
 
+  /// Join the public matchmaking queue.
+  /// Waits for the WebSocket to be connected first to ensure the 'gameStarted'
+  /// event can be received when the server creates a match.
   Future<void> joinWaitingRoom() async {
     try {
       await _wsService.waitForConnection();
@@ -252,13 +378,12 @@ class GameStateNotifier extends StateNotifier<GameState> {
       final status = result['status'] as String;
 
       if (status == 'game_created') {
-        // Game was created immediately (we were matched with a waiting player).
-        // The server also emits gameStarted via WebSocket — that handler
-        // will update state and navigate. We just ensure we're in the room.
-        final gameId = result['gameId'] as String;
-        final whitePlayerId = result['whitePlayerId'] as String;
-        final blackPlayerId = result['blackPlayerId'] as String;
-        final yourColor = result['yourColor'] as String;
+        // Immediate match — update state so WaitingRoomScreen can react.
+        // Navigation still comes from _handleGameStarted via WebSocket.
+        final gameId         = result['gameId']       as String;
+        final whitePlayerId  = result['whitePlayerId'] as String;
+        final blackPlayerId  = result['blackPlayerId'] as String;
+        final yourColor      = result['yourColor']     as String;
 
         state = state.copyWith(
           gameId: gameId,
@@ -266,18 +391,20 @@ class GameStateNotifier extends StateNotifier<GameState> {
           blackPlayerId: blackPlayerId,
           currentTurn: whitePlayerId,
           status: GameStatus.inProgress,
-          myColor: yourColor == 'white' ? PlayerColor.white : PlayerColor.black,
+          myColor:
+              yourColor == 'white' ? PlayerColor.white : PlayerColor.black,
         );
         _wsService.joinGame(gameId, _playerId);
       }
-      // status == 'waiting' → just sit tight; server will emit gameStarted when matched
+      // status == 'waiting' — server will push 'gameStarted' when matched
     } catch (e) {
-      // Show error if waiting room call fails
       final context = navigatorKey.currentContext;
       if (context != null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Connection error: ${e.toString().replaceAll('Exception: ', '')}'),
+            content: Text(
+              'Connection error: ${e.toString().replaceAll('Exception: ', '')}',
+            ),
             backgroundColor: Colors.red.shade700,
           ),
         );
@@ -285,6 +412,9 @@ class GameStateNotifier extends StateNotifier<GameState> {
     }
   }
 
+  /// Send a direct invitation to [invitedPlayerId].
+  /// Returns a result map with `success: true/false` so the UI can show
+  /// an appropriate snackbar.
   Future<Map<String, dynamic>> invitePlayer(String invitedPlayerId) async {
     try {
       await _wsService.waitForConnection();
@@ -299,12 +429,15 @@ class GameStateNotifier extends StateNotifier<GameState> {
     }
   }
 
+  /// Leave the waiting room (e.g. user pressed Cancel).
   Future<void> leaveWaitingRoom() async {
     try {
       await _apiService.leaveWaitingRoom(_playerId);
     } catch (_) {}
   }
 
+  /// Submit a chess move to the server for validation.
+  /// Does nothing if there is no active game.
   void makeMove(String from, String to, {String? promotion}) {
     if (state.gameId == null) return;
     _wsService.makeMove(
@@ -318,6 +451,7 @@ class GameStateNotifier extends StateNotifier<GameState> {
     );
   }
 
+  /// Resign the current game and return to the main menu.
   void leaveGame() {
     if (state.gameId != null) {
       _wsService.leaveGame(state.gameId!, _playerId);
@@ -325,6 +459,7 @@ class GameStateNotifier extends StateNotifier<GameState> {
     resetGame();
   }
 
+  /// Reset state to the initial idle state (no game).
   void resetGame() {
     state = GameState();
   }

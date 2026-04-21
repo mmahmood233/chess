@@ -1,3 +1,16 @@
+// main_menu_screen.dart — App entry screen.
+//
+// Shows three sections:
+//   • A hero banner with chess piece artwork.
+//   • Two game-mode cards: "Play Online" (waiting room) and "Play a Friend"
+//     (direct invite by Player ID).
+//   • A Player ID card that lets the user copy their UUID to share with friends.
+//
+// This screen also watches [gameStateProvider] so the [GameStateNotifier] is
+// constructed immediately on app launch — which connects the WebSocket and
+// registers the player.  Without this, a player sitting on the main menu
+// would never receive friend invitations because their socket would not be
+// registered with the server.
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,7 +18,7 @@ import 'package:chess_vectors_flutter/chess_vectors_flutter.dart';
 import '../providers/game_provider.dart';
 import 'waiting_room_screen.dart';
 
-// Chess.com dark palette
+// ── Chess.com dark palette ────────────────────────────────────────────────────
 const _bgDark    = Color(0xFF312E2B);
 const _panelDark = Color(0xFF272522);
 const _green     = Color(0xFF769656);
@@ -18,9 +31,9 @@ class MainMenuScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final playerId = ref.watch(playerIdProvider);
-    // Eagerly initialize the game notifier so the WebSocket connects and
-    // registers this player even before they tap any button.
-    // Without this, invites sent to a player on the main menu are silently dropped.
+
+    // Eagerly initialise the game notifier so the WebSocket connects and
+    // registers this player on app launch.  Required for invite reception.
     ref.watch(gameStateProvider);
 
     return Scaffold(
@@ -49,7 +62,7 @@ class MainMenuScreen extends ConsumerWidget {
               ),
             ),
 
-            // ── Main content (scrollable) ────────────────────────────────────
+            // ── Scrollable content ───────────────────────────────────────────
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.all(20),
@@ -58,12 +71,12 @@ class MainMenuScreen extends ConsumerWidget {
                   children: [
                     const SizedBox(height: 8),
 
-                    // Welcome hero
+                    // Decorative banner with piece art and tagline
                     _HeroBanner(),
 
                     const SizedBox(height: 24),
 
-                    // Game mode cards
+                    // Public matchmaking
                     _GameCard(
                       icon: Icons.public,
                       title: 'Play Online',
@@ -72,10 +85,13 @@ class MainMenuScreen extends ConsumerWidget {
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                            builder: (_) => const WaitingRoomScreen()),
+                          builder: (_) => const WaitingRoomScreen(),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
+
+                    // Direct friend challenge
                     _GameCard(
                       icon: Icons.person_add_outlined,
                       title: 'Play a Friend',
@@ -86,7 +102,7 @@ class MainMenuScreen extends ConsumerWidget {
 
                     const SizedBox(height: 28),
 
-                    // Player ID card
+                    // Tappable card showing and allowing copy of this player's UUID
                     _PlayerIdCard(
                       playerId: playerId,
                       onTap: () => _showIdDialog(context, playerId),
@@ -105,6 +121,7 @@ class MainMenuScreen extends ConsumerWidget {
 
   // ── Dialogs ────────────────────────────────────────────────────────────────
 
+  /// Shows the player's UUID in a selectable text field with a Copy button.
   void _showIdDialog(BuildContext context, String playerId) {
     showDialog(
       context: context,
@@ -117,14 +134,19 @@ class MainMenuScreen extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Your Player ID',
-                  style: TextStyle(
-                      color: _textMain,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold)),
+              const Text(
+                'Your Player ID',
+                style: TextStyle(
+                  color: _textMain,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               const SizedBox(height: 4),
-              const Text('Share this so friends can invite you.',
-                  style: TextStyle(color: _textDim, fontSize: 13)),
+              const Text(
+                'Share this so friends can invite you.',
+                style: TextStyle(color: _textDim, fontSize: 13),
+              ),
               const SizedBox(height: 16),
               Container(
                 width: double.infinity,
@@ -136,9 +158,10 @@ class MainMenuScreen extends ConsumerWidget {
                 child: SelectableText(
                   playerId,
                   style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                      color: Colors.white70),
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                    color: Colors.white70,
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
@@ -188,6 +211,8 @@ class MainMenuScreen extends ConsumerWidget {
     );
   }
 
+  /// Shows a text field where the user can enter a friend's Player ID and
+  /// send them a game invitation.
   void _showInviteDialog(BuildContext context, WidgetRef ref) {
     final ctrl = TextEditingController();
     showDialog(
@@ -201,14 +226,19 @@ class MainMenuScreen extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Challenge a Friend',
-                  style: TextStyle(
-                      color: _textMain,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold)),
+              const Text(
+                'Challenge a Friend',
+                style: TextStyle(
+                  color: _textMain,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               const SizedBox(height: 4),
-              const Text("Enter your friend's Player ID.",
-                  style: TextStyle(color: _textDim, fontSize: 13)),
+              const Text(
+                "Enter your friend's Player ID.",
+                style: TextStyle(color: _textDim, fontSize: 13),
+              ),
               const SizedBox(height: 16),
               TextField(
                 controller: ctrl,
@@ -224,7 +254,9 @@ class MainMenuScreen extends ConsumerWidget {
                     borderSide: BorderSide.none,
                   ),
                   contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 12),
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
                 ),
               ),
               const SizedBox(height: 20),
@@ -255,22 +287,27 @@ class MainMenuScreen extends ConsumerWidget {
                         final id = ctrl.text.trim();
                         if (id.isEmpty) return;
                         Navigator.pop(ctx);
+                        // Send invite via notifier; show result as a snackbar
                         final result = await ref
                             .read(gameStateProvider.notifier)
                             .invitePlayer(id);
                         if (context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                            content: Text(result['success'] == true
-                                ? (result['message'] as String? ??
-                                    'Invitation sent!')
-                                : 'Error: ${result['error']}'),
-                            backgroundColor: result['success'] == true
-                                ? _green
-                                : Colors.red.shade700,
-                            behavior: SnackBarBehavior.floating,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                          ));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                result['success'] == true
+                                    ? (result['message'] as String? ??
+                                        'Invitation sent!')
+                                    : 'Error: ${result['error']}',
+                              ),
+                              backgroundColor: result['success'] == true
+                                  ? _green
+                                  : Colors.red.shade700,
+                              behavior: SnackBarBehavior.floating,
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10)),
+                            ),
+                          );
                         }
                       },
                       child: const Text('Send'),
@@ -288,6 +325,8 @@ class MainMenuScreen extends ConsumerWidget {
 
 // ── Hero banner ───────────────────────────────────────────────────────────────
 
+/// Decorative panel at the top of the menu showing SVG chess pieces and a
+/// short description of the app.
 class _HeroBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
@@ -299,12 +338,20 @@ class _HeroBanner extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       child: Row(
         children: [
-          // Piece showcase
+          // 2×2 grid of piece icons (white & black knight + queen)
           Column(
             children: [
-              Row(children: [WhiteKnight(size: 40), const SizedBox(width: 4), WhiteQueen(size: 40)]),
+              Row(children: [
+                WhiteKnight(size: 40),
+                const SizedBox(width: 4),
+                WhiteQueen(size: 40),
+              ]),
               const SizedBox(height: 4),
-              Row(children: [BlackKnight(size: 40), const SizedBox(width: 4), BlackQueen(size: 40)]),
+              Row(children: [
+                BlackKnight(size: 40),
+                const SizedBox(width: 4),
+                BlackQueen(size: 40),
+              ]),
             ],
           ),
           const SizedBox(width: 20),
@@ -323,7 +370,11 @@ class _HeroBanner extends StatelessWidget {
                 SizedBox(height: 4),
                 Text(
                   'Challenge players around the world in real-time multiplayer chess.',
-                  style: TextStyle(color: _textDim, fontSize: 13, height: 1.4),
+                  style: TextStyle(
+                    color: _textDim,
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
                 ),
               ],
             ),
@@ -336,6 +387,8 @@ class _HeroBanner extends StatelessWidget {
 
 // ── Game mode card ─────────────────────────────────────────────────────────────
 
+/// A tappable card that represents a single game mode (Play Online / Play a
+/// Friend).  Renders a coloured background with an icon, title, and subtitle.
 class _GameCard extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -369,15 +422,22 @@ class _GameCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold)),
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                     const SizedBox(height: 2),
-                    Text(subtitle,
-                        style: const TextStyle(
-                            color: Colors.white70, fontSize: 13)),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -392,6 +452,8 @@ class _GameCard extends StatelessWidget {
 
 // ── Player ID card ─────────────────────────────────────────────────────────────
 
+/// Displays a truncated version of the player's UUID with a copy icon.
+/// Tapping opens the full ID dialog.
 class _PlayerIdCard extends StatelessWidget {
   final String playerId;
   final VoidCallback onTap;
@@ -417,16 +479,21 @@ class _PlayerIdCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Your Player ID',
-                      style: TextStyle(
-                          color: _textMain, fontWeight: FontWeight.w600)),
+                  const Text(
+                    'Your Player ID',
+                    style: TextStyle(
+                      color: _textMain,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                   const SizedBox(height: 2),
                   Text(
                     playerId,
                     style: const TextStyle(
-                        color: _textDim,
-                        fontSize: 11,
-                        fontFamily: 'monospace'),
+                      color: _textDim,
+                      fontSize: 11,
+                      fontFamily: 'monospace',
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
